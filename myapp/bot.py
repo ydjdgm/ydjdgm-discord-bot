@@ -18,71 +18,162 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
 
+
+
 # /queue command의 UI에 쓸 View 클래스
-class QueueView(View):
-    def __init__(self, queue, now_playing):
+class MusicControlView(View):
+    def __init__(self, bot_instance, interaction):
         super().__init__(timeout=queue_ui_timeout)
-        self.queue = queue
-        self.now_playing = now_playing
+        self.bot = bot_instance
+        self.guild_id = interaction.guild.id
+        self.interaction = interaction # 원본 interaction을 저장해 나중에 사용
         self.current_page = 0
         self.songs_per_page = 10
-        self.total_pages = math.ceil(len(self.queue) / self.songs_per_page)
-        
-        self.update_buttons()
+        self.update_view_data()
 
+    # 뷰의 데이터를 최신 상태로 업데이트하는 헬퍼 함수
+    def update_view_data(self):
+        self.queue = self.bot.song_queues.get(self.guild_id, [])
+        self.now_playing = self.bot.current_song.get(self.guild_id)
+        self.total_pages = math.ceil(len(self.queue) / self.songs_per_page)
+        self.update_buttons()
+        # 드롭다운 메뉴도 최신 큐 상태로 업데이트
+        self.update_remove_song_select()
+
+    # 임베드를 생성하는 함수
     async def create_embed(self):
-        embed = discord.Embed(title="🎶 노래 큐", color=discord.Color.purple())
-        
-        # 1. 현재 재생 중인 곡 표시
+        embed = discord.Embed(title="🎶 음악 제어판", color=discord.Color.purple())
         if self.now_playing:
-            title = self.now_playing.get('title', '알 수 없는 제목')
-            display_title = title if len(title) < 50 else title[:47] + "..."
-            uploader = self.now_playing.get('uploader', '알 수 없는 채널')
-            embed.add_field(
-                name="▶️ 현재 재생 중", 
-                value=f"**{display_title}**\n`{uploader}`  (신청자: {self.now_playing['requester'].mention})", 
-                inline=False
-            )
+            title = self.now_playing.get('title', '알 수 없는 제목'); uploader = self.now_playing.get('uploader', '알 수 없는 채널')
+            embed.add_field(name="▶️ 현재 재생 중", value=f"**{title}**\n`{uploader}`", inline=False)
         
-        # 2. 대기열 목록 표시
         if not self.queue:
-            if not self.now_playing: # 현재 재생 중인 곡도 없으면
-                embed.description = "큐가 비어있습니다."
+            if not self.now_playing: embed.description = "큐가 비어있습니다."
         else:
-            start_index = self.current_page * self.songs_per_page
-            end_index = start_index + self.songs_per_page
+            start_index = self.current_page * self.songs_per_page; end_index = start_index + self.songs_per_page
             queue_list_str = ""
             for i, song in enumerate(self.queue[start_index:end_index], start=start_index + 1):
-                title = song.get('title', '알 수 없는 제목')
-                display_title = title if len(title) < 50 else title[:47] + "..."
-                uploader = song.get('uploader', '알 수 없는 채널')
-                queue_list_str += f"`{i}`. {display_title} - `{uploader}`\n"
-            
-            embed.add_field(name="📋 대기열", value=queue_list_str, inline=False)
+                title = song.get('title', '알 수 없는 제목'); uploader = song.get('uploader', '알 수 없는 채널')
+                queue_list_str += f"`{i}`. {title[:30]}... - `{uploader}`\n"
+            embed.add_field(name=f"📋 대기열 ({len(self.queue)}곡)", value=queue_list_str, inline=False)
             embed.set_footer(text=f"페이지 {self.current_page + 1}/{self.total_pages if self.total_pages > 0 else 1}")
-            
         return embed
 
-    @discord.ui.button(label="< 이전", style=discord.ButtonStyle.primary)
-    async def prev_button(self, interaction: discord.Interaction, button: Button):
-        self.current_page -= 1
-        self.update_buttons()
-        embed = await self.create_embed()
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    @discord.ui.button(label="다음 >", style=discord.ButtonStyle.primary)
-    async def next_button(self, interaction: discord.Interaction, button: Button):
-        self.current_page += 1
-        self.update_buttons()
-        embed = await self.create_embed()
-        await interaction.response.edit_message(embed=embed, view=self)
-
+    # 버튼들의 활성화/비활성화 상태를 업데이트
     def update_buttons(self):
-        self.prev_button.disabled = self.current_page == 0
-        self.next_button.disabled = self.current_page >= self.total_pages - 1
+        # 페이지 버튼
+        self.prev_page.disabled = self.current_page == 0
+        self.next_page.disabled = self.current_page >= self.total_pages - 1
         if self.total_pages <= 1:
-            self.prev_button.disabled = True
-            self.next_button.disabled = True
+            self.prev_page.disabled = True; self.next_page.disabled = True
+        
+        # 재생/일시정지 버튼 상태 업데이트
+        voice_client = discord.utils.get(self.bot.voice_clients, guild=self.interaction.guild)
+        if voice_client and voice_client.is_paused():
+            self.pause_resume.label = "▶️ 재생"
+        else:
+            self.pause_resume.label = "⏸️ 일시정지"
+
+    # 드롭다운 메뉴를 업데이트하는 함수
+    def update_remove_song_select(self):
+        # 기존 Select가 있다면 제거
+        select_to_remove = next((child for child in self.children if isinstance(child, self.RemoveSongSelect)), None)
+        if select_to_remove:
+            self.remove_item(select_to_remove)
+            
+        # 새 Select 추가
+        start_index = self.current_page * self.songs_per_page
+        end_index = start_index + self.songs_per_page
+        songs_on_page = self.queue[start_index:end_index]
+        
+        if songs_on_page:
+            self.add_item(self.RemoveSongSelect(songs_on_page, start_index, self.bot))
+
+    # --- 버튼 콜백들 ---
+    @discord.ui.button(label="🔀 랜덤", style=discord.ButtonStyle.secondary, row=0)
+    async def shuffle_queue(self, interaction: discord.Interaction, button: Button):
+        if self.queue:
+            random.shuffle(self.bot.song_queues[self.guild_id])
+            self.update_view_data()
+            embed = await self.create_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.send_message("큐에 노래가 없습니다.", ephemeral=True)
+
+    @discord.ui.button(label="⏯️ 일시정지", style=discord.ButtonStyle.secondary, row=0)
+    async def pause_resume(self, interaction: discord.Interaction, button: Button):
+        voice_client = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
+        if voice_client:
+            if voice_client.is_playing():
+                voice_client.pause(); button.label = "▶️ 재생"
+            elif voice_client.is_paused():
+                voice_client.resume(); button.label = "⏸️ 일시정지"
+            await interaction.response.edit_message(view=self)
+        else:
+            await interaction.response.send_message("재생 중인 노래가 없습니다.", ephemeral=True)
+
+    @discord.ui.button(label="⏭️ 스킵", style=discord.ButtonStyle.primary, row=0)
+    async def skip_song(self, interaction: discord.Interaction, button: Button):
+        voice_client = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
+        if voice_client and voice_client.is_playing():
+            voice_client.stop()
+            # 노래가 바뀌면 뷰의 데이터가 달라지므로 잠시 후 뷰를 새로고침
+            await asyncio.sleep(1) 
+            self.update_view_data()
+            embed = await self.create_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.send_message("재생 중인 노래가 없습니다.", ephemeral=True)
+
+    @discord.ui.button(label="⏹️ 정지", style=discord.ButtonStyle.danger, row=0)
+    async def stop_player(self, interaction: discord.Interaction, button: Button):
+        voice_client = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
+        if voice_client:
+            self.bot.song_queues[self.guild_id] = []
+            self.bot.current_song.pop(self.guild_id, None)
+            voice_client.stop()
+            await voice_client.disconnect()
+            await interaction.response.edit_message(content="⏹️ 재생을 멈추고 채널을 나갑니다.", embed=None, view=None)
+        else:
+            await interaction.response.send_message("봇이 음성 채널에 없습니다.", ephemeral=True)
+
+    @discord.ui.button(label="< 이전", style=discord.ButtonStyle.blurple, row=1)
+    async def prev_page(self, interaction: discord.Interaction, button: Button):
+        self.current_page -= 1; self.update_view_data()
+        embed = await self.create_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="다음 >", style=discord.ButtonStyle.blurple, row=1)
+    async def next_page(self, interaction: discord.Interaction, button: Button):
+        self.current_page += 1; self.update_view_data()
+        embed = await self.create_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    # --- 드롭다운 메뉴 클래스 (View 클래스 내에 정의) ---
+    class RemoveSongSelect(discord.ui.Select):
+        def __init__(self, songs, start_index, bot_instance):
+            self.bot = bot_instance
+            options = []
+            for i, song in enumerate(songs):
+                title = song.get('title', '알 수 없는 제목')
+                # 옵션의 값(value)에 실제 큐의 인덱스를 저장하는 것이 핵심
+                options.append(discord.SelectOption(label=f"{i+start_index+1}. {title[:80]}", value=str(i + start_index)))
+
+            super().__init__(placeholder="삭제할 노래를 선택하세요...", min_values=1, max_values=1, options=options, row=2)
+
+        async def callback(self, interaction: discord.Interaction):
+            selected_index = int(self.values[0])
+            guild_id = interaction.guild.id
+            
+            removed_song = self.bot.song_queues[guild_id].pop(selected_index)
+            title = removed_song.get('title')
+            
+            # 뷰를 새로고침하여 변경사항을 즉시 반영
+            view = MusicControlView(self.bot, interaction)
+            embed = await view.create_embed()
+            await interaction.response.edit_message(content=f"🗑️ '{title}'을(를) 큐에서 제거했습니다.", embed=embed, view=view)
+
+
 
 # 봇 클래스 재정의
 class MyBot(discord.Client):
@@ -112,7 +203,7 @@ class MyBot(discord.Client):
 
         if not queue:
             self.current_song.pop(guild_id, None)
-            await asyncio.sleep(bot_sleep_timeout) # 사용자가 음성 채널에 bot_sleep_timeout초 없으면 disconnect
+            await asyncio.sleep(bot_sleep_timeout) # queue가 bot_sleep_timeout초 동안 비어있으면 disconnect
             voice_client = discord.utils.get(self.voice_clients, guild=interaction.guild)
             if voice_client and not voice_client.is_playing():
                 await voice_client.disconnect()
@@ -132,6 +223,9 @@ class MyBot(discord.Client):
             with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
                 info = ydl.extract_info(webpage_url, download=False)
                 stream_url = info['url']
+
+            thumbnail_url = info.get('thumbnail')
+            self.current_song[guild_id]['thumbnail'] = thumbnail_url
 
             # 현재 곡 표시 UI
             uploader = song_info.get('uploader', '알 수 없는 채널')
@@ -218,7 +312,7 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
                     'uploader': info.get('uploader', '알 수 없는 채널'),
                     'webpage_url': info.get('webpage_url'),
                     'channel_url': info.get('channel_url'),
-                    'thumbnail': video.get('thumbnail'),
+                    'thumbnail': info.get('thumbnail'),
                     'requester': interaction.user
                 }
                 songs_to_add.append(song)
@@ -251,7 +345,7 @@ async def queue(interaction: discord.Interaction):
         return
 
     # View를 생성하고 첫 페이지의 임베드를 가져옴
-    view = QueueView(queue=queue_list, now_playing=now_playing)
+    view = MusicControlView(bot_instance=bot, interaction=interaction)
     embed = await view.create_embed()
     
     await interaction.response.send_message(embed=embed, view=view)
@@ -334,6 +428,8 @@ async def playnext(interaction: discord.Interaction, query: str):
                 'title': info.get('title', '알 수 없는 제목'),
                 'uploader': info.get('uploader', '알 수 없는 채널'),
                 'webpage_url': info.get('webpage_url'),
+                'channel_url': info.get('channel_url'),
+                'thumbnail': info.get('thumbnail'),
                 'requester': interaction.user
             }
 
@@ -386,6 +482,8 @@ async def nowplaying(interaction: discord.Interaction):
     )
     if thumbnail_url:
         embed.set_thumbnail(url=thumbnail_url)
+
+    await interaction.response.send_message(embed=embed)
 
 
 
