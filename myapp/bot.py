@@ -8,6 +8,7 @@ from config import TOKEN
 
 queue_ui_timeout = 180
 bot_sleep_timeout = 60
+play_music_delete_timeout = 300
 
 # YDL, FFMPEG 설정
 YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True}
@@ -111,7 +112,7 @@ class MyBot(discord.Client):
 
         if not queue:
             self.current_song.pop(guild_id, None)
-            await asyncio.sleep(bot_sleep_timeout) # 사용자가 음성 채널에 bot_sleep_timeout초 없으면 disconnect 아닌가? ㅅㅂ 모르겠당ㅎㅎ
+            await asyncio.sleep(bot_sleep_timeout) # 사용자가 음성 채널에 bot_sleep_timeout초 없으면 disconnect
             voice_client = discord.utils.get(self.voice_clients, guild=interaction.guild)
             if voice_client and not voice_client.is_playing():
                 await voice_client.disconnect()
@@ -133,10 +134,24 @@ class MyBot(discord.Client):
                 stream_url = info['url']
 
             uploader = song_info.get('uploader', '알 수 없는 채널')
-            embed = discord.Embed(title="🎵 지금 재생 중", description=f"**{title}**", color=discord.Color.blue())
-            embed.add_field(name="채널", value=f"`{uploader}`", inline=True)
-            embed.add_field(name="신청자", value=requester.mention, inline=True)
-            await interaction.channel.send(embed=embed, delete_after=300)
+            channel_url = song_info.get('channel_url', '')
+            description_text = (
+                f"[{title}]({webpage_url})\n\n"  # 노래 제목 (링크)
+                f"채널: [{uploader}]({channel_url})\n" # 채널 이름 (링크)
+                f"신청자: {requester.mention}"
+            )
+
+            embed = discord.Embed(
+                title="🎵 지금 재생 중",
+                description=description_text,
+                color=discord.Color.blue()
+            )
+            # 썸네일 추가
+            thumbnail_url = info.get('thumbnail')
+            if thumbnail_url:
+                embed.set_thumbnail(url=thumbnail_url)
+
+            await interaction.channel.send(embed=embed, delete_after=play_music_delete_timeout)
 
             source = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTIONS)
             voice_client.play(source, after=lambda _: self.play_next_song(interaction))
@@ -179,10 +194,11 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
                 playlist_dict = ydl.extract_info(query, download=False)
                 if shuffle: random.shuffle(playlist_dict['entries'])
                 for video in playlist_dict['entries']:
-                    songs_to_add.append({
+                    songs_to_add.append({ # 여기서 영상 정보 가져옴
                         'title': video.get('title', '알 수 없는 제목'),
                         'uploader': video.get('uploader', '알 수 없는 채널'),
                         'webpage_url': video.get('url'),
+                        'channel_url': video.get('channel_url'),
                         'requester': interaction.user
                     })
             await interaction.followup.send(f"✅ **{len(songs_to_add)}개**의 노래를 재생목록에서 가져와 큐에 추가했습니다.")
@@ -195,10 +211,11 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
                 else:
                     info = ydl.extract_info(query, download=False)
                 
-                song = {
+                song = { # 여기서 영상 정보 가져옴22
                     'title': info.get('title', '알 수 없는 제목'),
                     'uploader': info.get('uploader', '알 수 없는 채널'),
                     'webpage_url': info.get('webpage_url'),
+                    'channel_url': info.get('channel_url'),
                     'requester': interaction.user
                 }
                 songs_to_add.append(song)
