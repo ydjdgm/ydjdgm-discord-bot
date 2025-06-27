@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.venv
+
+# 민감한 설정 파일
+config.py
+.env
+
+# IDE/에디터 설정 파일
+.vscode/
+.idea/
