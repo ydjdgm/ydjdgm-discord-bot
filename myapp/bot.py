@@ -227,25 +227,7 @@ class MyBot(discord.Client):
             thumbnail_url = info.get('thumbnail')
             self.current_song[guild_id]['thumbnail'] = thumbnail_url
 
-            # 현재 곡 표시 UI
-            uploader = song_info.get('uploader', '알 수 없는 채널')
-            channel_url = song_info.get('channel_url', '')
-            description_text = (
-                f"[{title}]({webpage_url})\n\n"  # 노래 제목 (링크)
-                f"채널: [{uploader}]({channel_url})\n" # 채널 이름 (링크)
-                f"신청자: {requester.mention}"
-            )
-
-            embed = discord.Embed(
-                title="🎵 지금 재생 중",
-                description=description_text,
-                color=discord.Color.blue()
-            )
-            # 썸네일 추가
-            thumbnail_url = info.get('thumbnail')
-            if thumbnail_url:
-                embed.set_thumbnail(url=thumbnail_url)
-
+            embed = self._create_nowplaying_embed(song_info)
             await interaction.channel.send(embed=embed, delete_after=play_music_delete_timeout)
 
             source = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTIONS)
@@ -253,6 +235,30 @@ class MyBot(discord.Client):
         except Exception as e:
             await interaction.channel.send(f"오류가 발생해 다음 곡을 재생합니다: {e}")
             self.play_next_song(interaction)
+
+    def _create_nowplaying_embed(self, song_info):
+        title = song_info.get('title', '알 수 없는 제목')
+        webpage_url = song_info.get('webpage_url', '')
+        uploader = song_info.get('uploader', '알 수 없는 채널')
+        channel_url = song_info.get('channel_url', '')
+        requester = song_info.get('requester')
+        thumbnail_url = song_info.get('thumbnail')
+
+        description_text = (
+            f"[{title}]({webpage_url})\n\n"
+            f"채널: [{uploader}]({channel_url})\n"
+            f"신청자: {requester.mention}"
+        )
+
+        embed = discord.Embed(
+            title="🎵 지금 재생 중",
+            description=description_text,
+            color=discord.Color.blue()
+        )
+        if thumbnail_url:
+            embed.set_thumbnail(url=thumbnail_url)
+        
+        return embed
 
 bot = MyBot()
 
@@ -461,28 +467,8 @@ async def nowplaying(interaction: discord.Interaction):
     if not song_info:
         await interaction.response.send_message("현재 재생 중인 노래가 없습니다.", ephemeral=True)
         return
-
-    title = song_info.get('title', '알 수 없는 제목')
-    webpage_url = song_info.get('webpage_url', '')
-    uploader = song_info.get('uploader', '알 수 없는 채널')
-    channel_url = song_info.get('channel_url', '')
-    requester = song_info.get('requester')
-    thumbnail_url = song_info.get('thumbnail')
-
-    description_text = (
-        f"[{title}]({webpage_url})\n\n"
-        f"채널: [{uploader}]({channel_url})\n"
-        f"신청자: {requester.mention}"
-    )
-
-    embed = discord.Embed(
-        title="🎵 지금 재생 중",
-        description=description_text,
-        color=discord.Color.blue()
-    )
-    if thumbnail_url:
-        embed.set_thumbnail(url=thumbnail_url)
-
+    
+    embed = bot._create_nowplaying_embed(song_info)
     await interaction.response.send_message(embed=embed)
 
 
