@@ -20,7 +20,17 @@ intents.voice_states = True
 
 
 
-# /queue command의 UI에 쓸 View 클래스
+# 서버별로 저장되는 모든 정보들을 담는 클래스
+class GuildMusicState:
+    def __init__(self, loop):
+        self.queue = []
+        self.current_song = None
+        self.volume = 1.0
+        self.loop_mode = "NONE" # NONE, SONG, QUEUE
+
+
+
+# /queue command의 UI에 쓸 View 클래스 *리팩토링 필요*
 class MusicControlView(View):
     def __init__(self, bot_instance, interaction):
         super().__init__(timeout=queue_ui_timeout)
@@ -177,17 +187,20 @@ class MusicControlView(View):
 
 # 봇 클래스 재정의
 class MyBot(discord.Client):
+    # 생성자
     def __init__(self):
         super().__init__(intents=intents)
         self.tree = discord.app_commands.CommandTree(self) # commands tree
         self.song_queues = {} # 노래 queue
         self.current_song = {} # 현재 재생 중인 노래
 
+    # commands 동기화
     async def setup_hook(self):
         await self.tree.sync() # commands 동기화
         print("Commands are now synced.\n명령어가 동기화되었습니다.")
 
-    async def on_ready(self): # 봇 시작 시
+    # 봇 시작 시
+    async def on_ready(self): 
         print(f"Logged in as {self.user}.\n{self.user}로 로그인했습니다.")
 
     def play_next_song(self, interaction):
@@ -259,6 +272,23 @@ class MyBot(discord.Client):
             embed.set_thumbnail(url=thumbnail_url)
         
         return embed
+    
+    # 노래 정보 반환 (영상 제목 + url, 채널 이름 + url, 썸네일)
+    async def _fetch_song_info(self, query):
+        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+            if "https://" not in query: # url이 아니면 검색어로 사용
+                info = ydl.extract_info(f"ytsearch:{query}", download=False)['entries'][0] # 검색결과[0](첫 번째 결과) 사용
+            else:
+                info = ydl.extract_info(query, download=False)
+
+        return {
+            'title': info.get('title', '알 수 없는 제목'),
+            'uploader': info.get('uploader', '알 수 없는 채널'),
+            'webpage_url': info.get('webpage_url'),
+            'channel_url': info.get('channel_url'),
+            'thumbnail': info.get('thumbnail'),
+        }
+
 
 bot = MyBot()
 
@@ -313,16 +343,11 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
                 else:
                     info = ydl.extract_info(query, download=False)
                 
-                song = { # 여기서 영상 정보 가져옴22
-                    'title': info.get('title', '알 수 없는 제목'),
-                    'uploader': info.get('uploader', '알 수 없는 채널'),
-                    'webpage_url': info.get('webpage_url'),
-                    'channel_url': info.get('channel_url'),
-                    'thumbnail': info.get('thumbnail'),
-                    'requester': interaction.user
-                }
-                songs_to_add.append(song)
-                await interaction.followup.send(f"✅ **{song['title']}** 을(를) 큐에 추가했습니다.")
+                song_info = await bot._fetch_song_info(query)
+                song_info['requester'] = interaction.user
+
+                songs_to_add.append(song_info)
+                await interaction.followup.send(f"✅ **{song_info['title']}** 을(를) 큐에 추가했습니다.")
         
         # 추출된 노래들을 큐에 추가
         bot.song_queues[guild_id].extend(songs_to_add)
@@ -423,26 +448,13 @@ async def playnext(interaction: discord.Interaction, query: str):
         bot.song_queues[guild_id] = []
 
     try:
-        # /play 동일하게
-        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-            if "https://" not in query:
-                info = ydl.extract_info(f"ytsearch:{query}", download=False)['entries'][0]
-            else:
-                info = ydl.extract_info(query, download=False)
-            
-            song = {
-                'title': info.get('title', '알 수 없는 제목'),
-                'uploader': info.get('uploader', '알 수 없는 채널'),
-                'webpage_url': info.get('webpage_url'),
-                'channel_url': info.get('channel_url'),
-                'thumbnail': info.get('thumbnail'),
-                'requester': interaction.user
-            }
+        song_info = await bot._fetch_song_info(query)
+        song_info['requester'] = interaction.user
 
         # append 대신 insert로 큐 맨 앞에 노래를 추가
-        bot.song_queues[guild_id].insert(0, song)
+        bot.song_queues[guild_id].insert(0, song_info)
         
-        await interaction.followup.send(f"↪️ **{song['title']}** 을(를) 다음 곡으로 예약했습니다.")
+        await interaction.followup.send(f"↪️ **{song_info['title']}** 을(를) 다음 곡으로 예약했습니다.")
 
     except Exception as e:
         await interaction.followup.send(f"오류가 발생했습니다: {e}")
