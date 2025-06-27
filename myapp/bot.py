@@ -133,6 +133,7 @@ class MyBot(discord.Client):
                 info = ydl.extract_info(webpage_url, download=False)
                 stream_url = info['url']
 
+            # 현재 곡 표시 UI
             uploader = song_info.get('uploader', '알 수 없는 채널')
             channel_url = song_info.get('channel_url', '')
             description_text = (
@@ -199,6 +200,7 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
                         'uploader': video.get('uploader', '알 수 없는 채널'),
                         'webpage_url': video.get('url'),
                         'channel_url': video.get('channel_url'),
+                        'thumbnail': video.get('thumbnail'),
                         'requester': interaction.user
                     })
             await interaction.followup.send(f"✅ **{len(songs_to_add)}개**의 노래를 재생목록에서 가져와 큐에 추가했습니다.")
@@ -216,6 +218,7 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
                     'uploader': info.get('uploader', '알 수 없는 채널'),
                     'webpage_url': info.get('webpage_url'),
                     'channel_url': info.get('channel_url'),
+                    'thumbnail': video.get('thumbnail'),
                     'requester': interaction.user
                 }
                 songs_to_add.append(song)
@@ -351,6 +354,39 @@ async def playnext(interaction: discord.Interaction, query: str):
     
     if not voice_client.is_playing():
         await bot.play_music(interaction)
+
+
+
+@bot.tree.command(name="nowplaying", description="현재 재생 중인 노래 정보를 보여줍니다.") # 수리 필요
+async def nowplaying(interaction: discord.Interaction):
+    guild_id = interaction.guild.id
+    song_info = bot.current_song.get(guild_id)
+
+    if not song_info:
+        await interaction.response.send_message("현재 재생 중인 노래가 없습니다.", ephemeral=True)
+        return
+
+    title = song_info.get('title', '알 수 없는 제목')
+    webpage_url = song_info.get('webpage_url', '')
+    uploader = song_info.get('uploader', '알 수 없는 채널')
+    channel_url = song_info.get('channel_url', '')
+    requester = song_info.get('requester')
+    thumbnail_url = song_info.get('thumbnail')
+
+    description_text = (
+        f"[{title}]({webpage_url})\n\n"
+        f"채널: [{uploader}]({channel_url})\n"
+        f"신청자: {requester.mention}"
+    )
+
+    embed = discord.Embed(
+        title="🎵 지금 재생 중",
+        description=description_text,
+        color=discord.Color.blue()
+    )
+    if thumbnail_url:
+        embed.set_thumbnail(url=thumbnail_url)
+
 
 
 #########################################################################################################################################
