@@ -1,12 +1,15 @@
 import discord
-import yt_dlp
+import yt_dlp # 유튜브 영상 정보 추출
 import asyncio
 import random
 import math
 from discord.ui import View, Button
 from config import TOKEN
 
-# (YDL, FFMPEG 설정은 이전과 동일)
+queue_ui_timeout = 180
+bot_sleep_timeout = 60
+
+# YDL, FFMPEG 설정
 YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True}
 FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 # 봇 권한 설정
@@ -14,10 +17,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
 
-# --- 페이지네이션을 위한 View 클래스 (수정됨) ---
+# /queue command의 UI에 쓸 View 클래스
 class QueueView(View):
     def __init__(self, queue, now_playing):
-        super().__init__(timeout=180)
+        super().__init__(timeout=queue_ui_timeout)
         self.queue = queue
         self.now_playing = now_playing
         self.current_page = 0
@@ -29,7 +32,7 @@ class QueueView(View):
     async def create_embed(self):
         embed = discord.Embed(title="🎶 노래 큐", color=discord.Color.purple())
         
-        # 1. 현재 재생 중인 곡 표시 (이제 'title'을 사용)
+        # 1. 현재 재생 중인 곡 표시
         if self.now_playing:
             title = self.now_playing.get('title', '알 수 없는 제목')
             display_title = title if len(title) < 50 else title[:47] + "..."
@@ -40,7 +43,7 @@ class QueueView(View):
                 inline=False
             )
         
-        # 2. 대기열 목록 표시 (이제 'title'을 사용)
+        # 2. 대기열 목록 표시
         if not self.queue:
             if not self.now_playing: # 현재 재생 중인 곡도 없으면
                 embed.description = "큐가 비어있습니다."
@@ -80,19 +83,19 @@ class QueueView(View):
             self.prev_button.disabled = True
             self.next_button.disabled = True
 
-# --- 봇 클래스 (수정됨) ---
+# 봇 클래스 재정의
 class MyBot(discord.Client):
     def __init__(self):
         super().__init__(intents=intents)
-        self.tree = discord.app_commands.CommandTree(self)
-        self.song_queues = {}
-        self.current_song = {}
+        self.tree = discord.app_commands.CommandTree(self) # commands tree
+        self.song_queues = {} # 노래 queue
+        self.current_song = {} # 현재 재생 중인 노래
 
     async def setup_hook(self):
-        await self.tree.sync()
+        await self.tree.sync() # commands 동기화
         print("Commands are now synced.\n명령어가 동기화되었습니다.")
 
-    async def on_ready(self):
+    async def on_ready(self): # 봇 시작 시
         print(f"Logged in as {self.user}.\n{self.user}로 로그인했습니다.")
 
     def play_next_song(self, interaction):
@@ -102,14 +105,13 @@ class MyBot(discord.Client):
         else:
             self.current_song.pop(guild_id, None)
 
-    # play_music 함수가 더 간단해졌습니다.
     async def play_music(self, interaction):
         guild_id = interaction.guild.id
         queue = self.song_queues.get(guild_id)
 
         if not queue:
             self.current_song.pop(guild_id, None)
-            await asyncio.sleep(60)
+            await asyncio.sleep(bot_sleep_timeout) # 사용자가 음성 채널에 bot_sleep_timeout초 없으면 disconnect 아닌가? ㅅㅂ 모르겠당ㅎㅎ
             voice_client = discord.utils.get(self.voice_clients, guild=interaction.guild)
             if voice_client and not voice_client.is_playing():
                 await voice_client.disconnect()
@@ -118,7 +120,6 @@ class MyBot(discord.Client):
         song_info = queue.pop(0)
         self.current_song[guild_id] = song_info
         
-        # 이제 큐에 저장된 title과 webpage_url을 사용합니다.
         title = song_info['title']
         webpage_url = song_info['webpage_url']
         requester = song_info['requester']
@@ -127,7 +128,6 @@ class MyBot(discord.Client):
         if not voice_client: return
 
         try:
-            # 최종 오디오 스트림 URL은 재생 직전에 한 번만 가져옵니다.
             with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
                 info = ydl.extract_info(webpage_url, download=False)
                 stream_url = info['url']
@@ -146,10 +146,16 @@ class MyBot(discord.Client):
 
 bot = MyBot()
 
-# --- 명령어들 ---
+
+
+#########################################################################################################################################
+#########################################################################################################################################
+#########################################################################################################################################
+
+
 @bot.tree.command(name="play", description="노래나 재생목록을 큐에 추가합니다.")
 @discord.app_commands.describe(
-    query="유튜브 주소(영상/재생목록) 또는 검색어를 입력하세요.",
+    query="유튜브 url (단일영상/재생목록) 또는 검색어를 입력하세요.",
     shuffle="재생목록을 섞어서 추가할지 선택합니다. (기본값: False)"
 )
 async def play(interaction: discord.Interaction, query: str, shuffle: bool = False):
@@ -198,7 +204,7 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
                 songs_to_add.append(song)
                 await interaction.followup.send(f"✅ **{song['title']}** 을(를) 큐에 추가했습니다.")
         
-        # 추출된 노래들을 실제 큐에 추가
+        # 추출된 노래들을 큐에 추가
         bot.song_queues[guild_id].extend(songs_to_add)
 
     except Exception as e:
@@ -284,7 +290,7 @@ async def stop(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="playnext", description="노래를 바로 다음 곡으로 예약합니다.")
-@discord.app_commands.describe(query="유튜브 주소 또는 검색어를 입력하세요.")
+@discord.app_commands.describe(query="유튜브 url (단일영상) 또는 검색어를 입력하세요.")
 async def playnext(interaction: discord.Interaction, query: str):
     if not interaction.user.voice:
         await interaction.response.send_message("먼저 음성 채널에 참여해주세요!", ephemeral=True)
@@ -297,7 +303,7 @@ async def playnext(interaction: discord.Interaction, query: str):
         bot.song_queues[guild_id] = []
 
     try:
-        # play 명령어와 동일하게 yt-dlp로 노래 정보를 미리 가져옵니다.
+        # /play 동일하게
         with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
             if "https://" not in query:
                 info = ydl.extract_info(f"ytsearch:{query}", download=False)['entries'][0]
@@ -311,8 +317,7 @@ async def playnext(interaction: discord.Interaction, query: str):
                 'requester': interaction.user
             }
 
-        # --- 여기가 핵심적인 차이입니다 ---
-        # append 대신 insert(0, ...)를 사용해 큐의 맨 앞에 노래를 추가합니다.
+        # append 대신 insert로 큐 맨 앞에 노래를 추가
         bot.song_queues[guild_id].insert(0, song)
         
         await interaction.followup.send(f"↪️ **{song['title']}** 을(를) 다음 곡으로 예약했습니다.")
@@ -327,10 +332,13 @@ async def playnext(interaction: discord.Interaction, query: str):
         await interaction.user.voice.channel.connect()
         voice_client = discord.utils.get(bot.voice_clients, guild=interaction.guild)
     
-    # 만약 노래가 재생 중이 아닐 경우에만 새로 재생을 시작합니다.
-    # 이미 재생 중이라면, 큐 맨 앞에 추가만 하고 가만히 둡니다.
     if not voice_client.is_playing():
         await bot.play_music(interaction)
+
+
+#########################################################################################################################################
+#########################################################################################################################################
+#########################################################################################################################################
 
 
 
