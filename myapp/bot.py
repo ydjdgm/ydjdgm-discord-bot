@@ -6,82 +6,56 @@ import math
 from discord.ui import View, Button
 from config import TOKEN
 
+# (YDL, FFMPEG 설정은 이전과 동일)
+YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True}
+FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
+# 봇 권한 설정
+intents = discord.Intents.default()
+intents.message_content = True
+intents.voice_states = True
 
-
-
-
-# yt-dlp 설정 (사운드만, 최고 음질): 단일 영상용
-YDL_OPTIONS = {
-    'format': 'bestaudio/best',
-    'noplaylist': True,
-    'quiet': True,
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-}
-# yt-dlp 옵션: 재생목록용
-YDL_PLAYLIST_OPTIONS = {
-    'format': 'bestaudio/best',
-    'extract_flat': True,
-    'quiet': True,
-}
-
-# FFmpeg 설정
-FFMPEG_OPTIONS = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn',
-}
-
-
-
-
-# --- 페이지네이션을 위한 View 클래스 ---
+# --- 페이지네이션을 위한 View 클래스 (수정됨) ---
 class QueueView(View):
     def __init__(self, queue, now_playing):
-        super().__init__(timeout=180)  # 180초 동안 상호작용 없으면 버튼 비활성화
+        super().__init__(timeout=180)
         self.queue = queue
         self.now_playing = now_playing
         self.current_page = 0
         self.songs_per_page = 10
         self.total_pages = math.ceil(len(self.queue) / self.songs_per_page)
         
-        # 첫 페이지에서는 '이전' 버튼 비활성화
-        self.prev_button.disabled = True
-        # 페이지가 하나뿐이면 '다음' 버튼도 비활성화
-        if self.total_pages <= 1:
-            self.next_button.disabled = True
+        self.update_buttons()
 
     async def create_embed(self):
         embed = discord.Embed(title="🎶 노래 큐", color=discord.Color.purple())
         
-        # 1. 현재 재생 중인 곡 표시
+        # 1. 현재 재생 중인 곡 표시 (이제 'title'을 사용)
         if self.now_playing:
-            query = self.now_playing['query']
-            # 너무 긴 URL은 잘라서 표시
-            display_query = query if len(query) < 50 else query[:47] + "..."
+            title = self.now_playing.get('title', '알 수 없는 제목')
+            display_title = title if len(title) < 50 else title[:47] + "..."
+            uploader = self.now_playing.get('uploader', '알 수 없는 채널')
             embed.add_field(
                 name="▶️ 현재 재생 중", 
-                value=f"**{display_query}**\n(신청자: {self.now_playing['requester'].mention})", 
+                value=f"**{display_title}**\n`{uploader}`  (신청자: {self.now_playing['requester'].mention})", 
                 inline=False
             )
         
-        # 2. 대기열 목록 표시 (페이지네이션)
-        start_index = self.current_page * self.songs_per_page
-        end_index = start_index + self.songs_per_page
-        
+        # 2. 대기열 목록 표시 (이제 'title'을 사용)
         if not self.queue:
-            embed.description = "대기열이 비어있습니다."
+            if not self.now_playing: # 현재 재생 중인 곡도 없으면
+                embed.description = "큐가 비어있습니다."
         else:
+            start_index = self.current_page * self.songs_per_page
+            end_index = start_index + self.songs_per_page
             queue_list_str = ""
             for i, song in enumerate(self.queue[start_index:end_index], start=start_index + 1):
-                query = song['query']
-                display_query = query if len(query) < 50 else query[:47] + "..."
-                queue_list_str += f"`{i}`. {display_query}\n"
+                title = song.get('title', '알 수 없는 제목')
+                display_title = title if len(title) < 50 else title[:47] + "..."
+                uploader = song.get('uploader', '알 수 없는 채널')
+                queue_list_str += f"`{i}`. {display_title} - `{uploader}`\n"
             
             embed.add_field(name="📋 대기열", value=queue_list_str, inline=False)
-            embed.set_footer(text=f"페이지 {self.current_page + 1}/{self.total_pages}")
+            embed.set_footer(text=f"페이지 {self.current_page + 1}/{self.total_pages if self.total_pages > 0 else 1}")
             
         return embed
 
@@ -102,113 +76,81 @@ class QueueView(View):
     def update_buttons(self):
         self.prev_button.disabled = self.current_page == 0
         self.next_button.disabled = self.current_page >= self.total_pages - 1
+        if self.total_pages <= 1:
+            self.prev_button.disabled = True
+            self.next_button.disabled = True
 
-
-
-
-# 봇 권한 설정
-intents = discord.Intents.default()
-intents.message_content = True
-intents.voice_states = True
-
-
-# 봇 클래스 재정의
+# --- 봇 클래스 (수정됨) ---
 class MyBot(discord.Client):
     def __init__(self):
         super().__init__(intents=intents)
-        self.tree = discord.app_commands.CommandTree(self) # commands 트리
-        self.song_queues = {} # 곡 리스트 (서버 단위로 저장)
-        self.current_song = {} # 현재 재생 곡 정보
+        self.tree = discord.app_commands.CommandTree(self)
+        self.song_queues = {}
+        self.current_song = {}
 
     async def setup_hook(self):
-        await self.tree.sync()  # commands 동기화
+        await self.tree.sync()
         print("Commands are now synced.\n명령어가 동기화되었습니다.")
 
-    async def on_ready(self): # 봇 시작시
+    async def on_ready(self):
         print(f"Logged in as {self.user}.\n{self.user}로 로그인했습니다.")
 
-    # 노래가 끝나면 자동으로 다음 곡을 재생하는 함수
     def play_next_song(self, interaction):
         guild_id = interaction.guild.id
         if guild_id in self.song_queues and self.song_queues[guild_id]:
-            # 다음 곡 재생을 위해 play_music 코루틴을 이벤트 루프에서 실행
-            # asyncio.run_coroutine_threadsafe를 사용해 스레드 세이프하게 호출
             asyncio.run_coroutine_threadsafe(self.play_music(interaction), self.loop)
+        else:
+            self.current_song.pop(guild_id, None)
 
-    # 음악을 실제로 재생하는 함수
+    # play_music 함수가 더 간단해졌습니다.
     async def play_music(self, interaction):
         guild_id = interaction.guild.id
         queue = self.song_queues.get(guild_id)
 
         if not queue:
             self.current_song.pop(guild_id, None)
-            await asyncio.sleep(60) # 큐가 비어있으면 60초 후 음성 채널에서 나감
+            await asyncio.sleep(60)
             voice_client = discord.utils.get(self.voice_clients, guild=interaction.guild)
             if voice_client and not voice_client.is_playing():
-                 await voice_client.disconnect()
+                await voice_client.disconnect()
             return
         
-        # 큐에서 다음 곡을 꺼내오고 '현재 재생 곡'으로 설정
         song_info = queue.pop(0)
         self.current_song[guild_id] = song_info
-        query = song_info['query']
+        
+        # 이제 큐에 저장된 title과 webpage_url을 사용합니다.
+        title = song_info['title']
+        webpage_url = song_info['webpage_url']
         requester = song_info['requester']
 
         voice_client = discord.utils.get(self.voice_clients, guild=interaction.guild)
-        if not voice_client:
-            # 혹시 모를 상황에 대비해 음성 클라이언트가 없으면 다시 연결
-            if interaction.user.voice:
-                voice_client = await interaction.user.voice.channel.connect()
-            else:
-                await interaction.followup.send("ERROR: 음성 채널에 연결할 수 없습니다.")
-                return
-            
+        if not voice_client: return
+
         try:
+            # 최종 오디오 스트림 URL은 재생 직전에 한 번만 가져옵니다.
             with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-                if "https://" not in query:
-                    info = ydl.extract_info(f"ytsearch:{query}", download=False)['entries'][0]
-                else:
-                    info = ydl.extract_info(query, download=False)
-            
-            url = info['url']
-            title = info.get('title', '알 수 없는 제목')
+                info = ydl.extract_info(webpage_url, download=False)
+                stream_url = info['url']
 
-            # '지금 재생 중' 메시지 전송
+            uploader = song_info.get('uploader', '알 수 없는 채널')
             embed = discord.Embed(title="🎵 지금 재생 중", description=f"**{title}**", color=discord.Color.blue())
+            embed.add_field(name="채널", value=f"`{uploader}`", inline=True)
             embed.add_field(name="신청자", value=requester.mention, inline=True)
-            await interaction.channel.send(embed=embed, delete_after=300) # 5분 뒤 자동 삭제
+            await interaction.channel.send(embed=embed, delete_after=300)
 
-            source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-            # after 콜백: 노래가 끝나면 play_next_song 함수를 호출
+            source = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTIONS)
             voice_client.play(source, after=lambda _: self.play_next_song(interaction))
-
         except Exception as e:
             await interaction.channel.send(f"오류가 발생해 다음 곡을 재생합니다: {e}")
             self.play_next_song(interaction)
 
+bot = MyBot()
 
-# 봇 객체 생성
-bot = MyBot()   
-
-
-
-
-
-###################################################################################################################################
-###################################################################################################################################
-# COMMANDS
-
-
-
-@bot.tree.command(name="hello", description="Say hello to the bot!")
-async def hello(interaction: discord.Interaction):
-    await interaction.response.send_message(f"Hello, {interaction.user.name}!")
-
-
-
+# --- 명령어들 ---
+# '/play' 명령어가 가장 많이 바뀌었습니다.
 @bot.tree.command(name="play", description="노래나 재생목록을 큐에 추가합니다.")
 @discord.app_commands.describe(
-    query="유튜브 url(영상/재생목록) 또는 검색어를 입력하세요.\n검색어 입력시 해당 검색어의 첫 번째 검색결과 영상이 재생됩니다", # 여기 UI 확인 필요
+    query="유튜브 주소(영상/재생목록) 또는 검색어를 입력하세요.",
     shuffle="재생목록을 섞어서 추가할지 선택합니다. (기본값: False)"
 )
 async def play(interaction: discord.Interaction, query: str, shuffle: bool = False):
@@ -216,58 +158,62 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
         await interaction.response.send_message("먼저 음성 채널에 참여해주세요!", ephemeral=True)
         return
     
-    await interaction.response.defer() # 로딩중 표시
+    await interaction.response.defer()
 
     guild_id = interaction.guild.id
-    voice_client = discord.utils.get(bot.voice_clients, guild=interaction.guild)
-
-    # 봇이 음성 채널에 없으면 연결
-    if not voice_client:
-        voice_client = await interaction.user.voice.channel.connect()
-
-    # 큐가 없으면 새로 생성
     if guild_id not in bot.song_queues:
         bot.song_queues[guild_id] = []
-    
-    # --- 재생목록 처리 로직 ---
-    is_playlist = 'list=' in query and 'https://' in query
 
-    if is_playlist:
-        try:
-            with yt_dlp.YoutubeDL(YDL_PLAYLIST_OPTIONS) as ydl:
+    try:
+        # --- yt-dlp 정보 추출 로직 ---
+        songs_to_add = []
+        
+        # 재생목록 처리
+        if 'list=' in query and 'https://' in query:
+            with yt_dlp.YoutubeDL({'extract_flat': True, 'quiet': True}) as ydl:
                 playlist_dict = ydl.extract_info(query, download=False)
-                videos = playlist_dict.get('entries', [])
+                if shuffle: random.shuffle(playlist_dict['entries'])
+                for video in playlist_dict['entries']:
+                    songs_to_add.append({
+                        'title': video.get('title', '알 수 없는 제목'),
+                        'uploader': video.get('uploader', '알 수 없는 채널'),
+                        'webpage_url': video.get('url'),
+                        'requester': interaction.user
+                    })
+            await interaction.followup.send(f"✅ **{len(songs_to_add)}개**의 노래를 재생목록에서 가져와 큐에 추가했습니다.")
+        
+        # 단일 영상/검색어 처리
+        else:
+            with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+                if "https://" not in query:
+                    info = ydl.extract_info(f"ytsearch:{query}", download=False)['entries'][0]
+                else:
+                    info = ydl.extract_info(query, download=False)
                 
-                if not videos:
-                    await interaction.followup.send("재생목록에서 영상을 찾을 수 없습니다.")
-                    return
-                
-                if shuffle:
-                    random.shuffle(videos) # 리스트 섞기
-                
-                for video in videos:
-                    video_url = video.get('url')
-                    if video_url:
-                        song_info = {'query': video_url, 'requester': interaction.user}
-                        bot.song_queues[guild_id].append(song_info)
+                song = {
+                    'title': info.get('title', '알 수 없는 제목'),
+                    'uploader': info.get('uploader', '알 수 없는 채널'),
+                    'webpage_url': info.get('webpage_url'),
+                    'requester': interaction.user
+                }
+                songs_to_add.append(song)
+                await interaction.followup.send(f"✅ **{song['title']}** 을(를) 큐에 추가했습니다.")
+        
+        # 추출된 노래들을 실제 큐에 추가
+        bot.song_queues[guild_id].extend(songs_to_add)
 
-            shuffle_text = " (랜덤)" if shuffle else ""
-            await interaction.followup.send(f"✅ **{len(videos)}개**의 노래를 재생목록에서 가져와 큐에 추가했습니다{shuffle_text}.")
+    except Exception as e:
+        await interaction.followup.send(f"오류가 발생했습니다: {e}")
+        return
 
-        except Exception as e:
-            await interaction.followup.send(f"재생목록을 가져오는 중 오류가 발생했습니다: {e}")
-            return
-    else:
-        # --- 단일 영상 또는 검색어 처리 로직 (기존과 동일) ---
-        song_info = {'query': query, 'requester': interaction.user}
-        bot.song_queues[guild_id].append(song_info)
-        await interaction.followup.send(f"✅ **{query}** 을(를) 큐에 추가했습니다.")
-
-    # 현재 아무것도 재생 중이 아닐 때만 재생 시작
+    # 봇을 음성 채널에 연결하고 재생 시작
+    voice_client = discord.utils.get(bot.voice_clients, guild=interaction.guild)
+    if not voice_client:
+        await interaction.user.voice.channel.connect()
+        voice_client = discord.utils.get(bot.voice_clients, guild=interaction.guild)
+    
     if not voice_client.is_playing():
         await bot.play_music(interaction)
-
-
 
 @bot.tree.command(name="queue", description="노래 큐 목록을 보여줍니다.")
 async def queue(interaction: discord.Interaction):
@@ -335,15 +281,6 @@ async def stop(interaction: discord.Interaction):
         await interaction.response.send_message("⏹️ 재생을 멈추고 채널을 나갑니다.")
     else:
         await interaction.response.send_message("봇이 음성 채널에 없습니다.", ephemeral=True)
-
-
-
-###################################################################################################################################
-###################################################################################################################################
-
-
-
-
 
 if TOKEN:
     bot.run(TOKEN)
