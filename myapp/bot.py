@@ -147,7 +147,6 @@ class MyBot(discord.Client):
 bot = MyBot()
 
 # --- 명령어들 ---
-# '/play' 명령어가 가장 많이 바뀌었습니다.
 @bot.tree.command(name="play", description="노래나 재생목록을 큐에 추가합니다.")
 @discord.app_commands.describe(
     query="유튜브 주소(영상/재생목록) 또는 검색어를 입력하세요.",
@@ -281,6 +280,59 @@ async def stop(interaction: discord.Interaction):
         await interaction.response.send_message("⏹️ 재생을 멈추고 채널을 나갑니다.")
     else:
         await interaction.response.send_message("봇이 음성 채널에 없습니다.", ephemeral=True)
+
+
+
+@bot.tree.command(name="playnext", description="노래를 바로 다음 곡으로 예약합니다.")
+@discord.app_commands.describe(query="유튜브 주소 또는 검색어를 입력하세요.")
+async def playnext(interaction: discord.Interaction, query: str):
+    if not interaction.user.voice:
+        await interaction.response.send_message("먼저 음성 채널에 참여해주세요!", ephemeral=True)
+        return
+    
+    await interaction.response.defer()
+
+    guild_id = interaction.guild.id
+    if guild_id not in bot.song_queues:
+        bot.song_queues[guild_id] = []
+
+    try:
+        # play 명령어와 동일하게 yt-dlp로 노래 정보를 미리 가져옵니다.
+        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+            if "https://" not in query:
+                info = ydl.extract_info(f"ytsearch:{query}", download=False)['entries'][0]
+            else:
+                info = ydl.extract_info(query, download=False)
+            
+            song = {
+                'title': info.get('title', '알 수 없는 제목'),
+                'uploader': info.get('uploader', '알 수 없는 채널'),
+                'webpage_url': info.get('webpage_url'),
+                'requester': interaction.user
+            }
+
+        # --- 여기가 핵심적인 차이입니다 ---
+        # append 대신 insert(0, ...)를 사용해 큐의 맨 앞에 노래를 추가합니다.
+        bot.song_queues[guild_id].insert(0, song)
+        
+        await interaction.followup.send(f"↪️ **{song['title']}** 을(를) 다음 곡으로 예약했습니다.")
+
+    except Exception as e:
+        await interaction.followup.send(f"오류가 발생했습니다: {e}")
+        return
+
+    # 봇을 음성 채널에 연결하고 재생 시작
+    voice_client = discord.utils.get(bot.voice_clients, guild=interaction.guild)
+    if not voice_client:
+        await interaction.user.voice.channel.connect()
+        voice_client = discord.utils.get(bot.voice_clients, guild=interaction.guild)
+    
+    # 만약 노래가 재생 중이 아닐 경우에만 새로 재생을 시작합니다.
+    # 이미 재생 중이라면, 큐 맨 앞에 추가만 하고 가만히 둡니다.
+    if not voice_client.is_playing():
+        await bot.play_music(interaction)
+
+
 
 if TOKEN:
     bot.run(TOKEN)
