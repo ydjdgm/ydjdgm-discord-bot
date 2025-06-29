@@ -3,8 +3,12 @@ import yt_dlp
 import asyncio
 import random
 import math
+import google.generativeai as genai
 from discord.ui import View, Button
-from config import TOKEN
+from config import TOKEN, GEMINI_API_KEY
+
+
+# --- 음악봇 ---
 
 # --- 설정 변수 ---
 queue_ui_timeout = 180  # 큐 UI 타임아웃 (초)
@@ -145,12 +149,37 @@ class GuildMusicState:
     def play_next_song(self):
         asyncio.run_coroutine_threadsafe(self.play_music(), self.bot.loop)
 
+    # 인덱스 목록으로 큐에서 여러 곡을 삭제하는 함수
+    def remove_songs_by_indices(self, indices_to_remove: list[int]) -> tuple[list[str], list[int]]:
+        removed_songs_titles = []
+        failed_indices = []
+        
+        # 큐의 인덱스는 0부터 시작하므로, 사용자가 입력한 1기반 인덱스를 0기반으로 변환
+        # 예: [1, 3] -> [0, 2]
+        zero_based_indices = [int(i) - 1 for i in indices_to_remove]
+
+        # 여러 항목을 삭제할 때 리스트 인덱스가 꼬이는 것을 방지하기 위해,
+        # 인덱스를 역순으로 (큰 숫자부터) 정렬
+        for index in sorted(zero_based_indices, reverse=True):
+            # 인덱스가 큐 범위 내에 있는지 확인
+            if 0 <= index < len(self.queue):
+                removed_song = self.queue.pop(index)
+                removed_songs_titles.append(removed_song.get('title', '알 수 없는 제목'))
+            else:
+                # 유효하지 않은 인덱스는 실패 목록에 추가 (1기반으로 다시 변환)
+                failed_indices.append(index + 1)
+        
+        # 삭제된 노래 제목들은 다시 정방향으로 정렬해서 반환 (사용자 보기 편하게)
+        return sorted(removed_songs_titles), sorted(failed_indices)
+
     # 재생 중인 곡 건너뛰기
     def skip(self):
         voice_client = self.interaction.guild.voice_client
         if voice_client and voice_client.is_playing():
-            voice_client.stop(); return True
+            voice_client.stop()
+            return True
         return False
+
 
     # 재생 중인 곡 일시정지
     def pause(self):
@@ -182,6 +211,7 @@ class MyBot(discord.Client):
         super().__init__(intents=intents)
         self.tree = discord.app_commands.CommandTree(self)
         self.music_states = {}
+        self.chat_sessions = {} # 채널 별로 AI 채팅 구분
 
     # commands 동기화
     async def setup_hook(self):
@@ -317,7 +347,15 @@ class MusicQueueView(View):
         self.update_view_data()
 
     def update_view_data(self):
-        self.total_pages = math.ceil(len(self.state.queue) / self.songs_per_page)
+        queue_length = len(self.state.queue)
+        
+        # 대기열이 비어있어도 total_pages가 최소 1이 되도록
+        self.total_pages = math.ceil(queue_length / self.songs_per_page) if queue_length > 0 else 1
+        
+        # 현재 페이지가 총 페이지 수를 넘어가지 않도록 조정 (삭제 등으로 인해 페이지 수가 줄었을 경우)
+        if self.current_page >= self.total_pages:
+            self.current_page = self.total_pages - 1
+
         self.update_buttons()
         self.update_remove_song_select()
 
@@ -382,13 +420,14 @@ class MusicQueueView(View):
 
     @discord.ui.button(label="⏭️ 스킵", style=discord.ButtonStyle.primary, row=0)
     async def skip_song(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer()
         if self.state.skip():
+            await interaction.response.defer()
             await asyncio.sleep(0.5)
             self.update_view_data()
             embed = await self.create_embed()
             await interaction.edit_original_response(embed=embed, view=self)
-        else: await interaction.followup.send("재생 중인 노래가 없습니다.", ephemeral=True)
+            await interaction.followup.send("⏭️ 노래를 건너뛰었습니다.") # 후속 응답
+        else: await interaction.response.send_message("재생 중인 노래가 없습니다.")
 
     @discord.ui.button(label="⏹️ 정지", style=discord.ButtonStyle.danger, row=0)
     async def stop_player(self, interaction: discord.Interaction, button: Button):
@@ -425,6 +464,174 @@ class MusicQueueView(View):
             view = MusicQueueView(self.bot, interaction)
             embed = await view.create_embed()
             await interaction.response.edit_message(content=f"🗑️ '{title}'을(를) 큐에서 제거했습니다.", embed=embed, view=view)
+
+
+
+# --- AI 챗봇 ---
+
+# 페르소나 정의
+CHATBOT_PERSONA = """
+너는 이 디스코드 서버의 AI 도우미이자, 사용자들의 든든한 친구 'ydjdgm'이야.
+항상 친절하고 명확한 반말로 대화하고, 이모지는 문장의 끝에 가끔 하나씩만 사용해줘.
+
+**너의 행동 지침:**
+
+1.  **언어 사용 원칙**: 사용자가 사용하는 언어로 답변하는 것이 최우선이야.
+    * 사용자가 **한국어**로 질문하면, 기존처럼 친절하고 명확한 **반말**로 대답해줘.
+    * 사용자가 **다른 언어**(영어, 일본어 등)로 질문하면, 해당 언어의 **친절한 톤**으로 자연스럽게 대답해줘.
+    * 이모지는 문장의 끝에 가끔 하나씩만 사용해서 감정을 표현해줘.
+
+2.  **기능 실행 우선**: 사용자의 요청이 아래 '네가 사용할 수 있는 도구' 목록에 있는 기능으로 해결될 수 있다면, 반드시 설명 대신 **함수를 호출해서 즉시 실행**해줘.
+
+3.  **기능 설명**: 사용자가 봇의 특정 기능(예: "/play")에 대해 "어떻게 써?", "뭐하는 거야?" 라고 명확히 물어볼 때만, 아래 '너의 지식 베이스'를 참고해서 구체적으로 알려줘.
+
+4.  **일상 대화**: 위 경우에 해당하지 않는 모든 대화에서는 사용자의 좋은 친구가 되어줘.
+
+---
+### **[ 네가 사용할 수 있는 도구 (Action) ]**
+
+이것은 네가 직접 호출할 수 있는 함수 목록이야. 사용자의 요청 의도를 파악해서 알맞은 함수를 사용해.
+
+**[1. 음악 재생]**
+* `play_song`: 사용자가 "노래 틀어줘", "큐에 추가해줘" 등 일반적인 재생을 원할 때 사용.
+    * (예시) "아이유 노래 틀어줘" -> `play_song(query="아이유 노래")` 호출
+* `play_song_next`: 사용자가 "다음 곡으로", "먼저 듣고 싶어" 등 우선 재생을 원할 때 사용.
+    * (예시) "이 노래 다음에 바로 틀어줘" -> `play_song_next(query="이 노래")` 호출
+
+**[2. 큐 관리]**
+* `show_queue`: 사용자가 "큐 보여줘", "대기열 목록" 등 큐 전체를 보고 싶어할 때 사용.
+* `remove_songs_from_queue`: 사용자가 "2번 노래 빼줘", "1번, 5번 삭제해" 등 특정 노래를 큐에서 제거하길 원할 때 사용. **반드시 삭제할 번호를 숫자로 된 리스트에 담아 `indices` 파라미터로 전달**해야 해.
+    * (예시) "큐에서 2번, 5번 노래 빼줘" -> `remove_songs_from_queue(indices=[2, 5])` 호출
+
+**[3. 재생 제어]**
+* `get_now_playing`: "지금 뭐 나와?", "이 노래 뭐야?" 등 현재 재생 중인 노래 정보가 궁금할 때 사용.
+* `skip_current_song`: "스킵", "넘겨", "다음 곡" 등 현재 노래를 건너뛰고 싶어할 때 사용.
+
+---
+### **[ 너의 지식 베이스: 명령어 설명 (Knowledge) ]**
+
+이것은 사용자가 슬래시 명령어 자체에 대해 물어볼 때 참고할 정보야.
+
+* **/play `query` `shuffle`**: 유튜브에서 노래를 검색하거나 URL, 재생목록을 큐에 추가하는 가장 기본적인 명령어. 검색 시에는 상위 5개 결과를 보여주고 고를 수 있게 해. `shuffle` 옵션으로 재생목록을 섞을 수도 있어.
+* **/playnext `query`**: `/play`와 비슷하지만, 노래를 큐 맨 뒤가 아닌 바로 다음 순서에 추가해줘.
+* **/queue**: 현재 재생 곡과 대기열을 보여주는 컨트롤러를 소환해. 버튼으로 랜덤 재생, 일시정지/재생, 스킵, 정지, 페이지 넘기기, 특정 곡 삭제가 가능해.
+* **/skip**: 현재 노래를 건너뛰어.
+* **/nowplaying**: 현재 재생 중인 노래의 상세 정보를 보여줘.
+* **/stop**: 재생을 모두 멈추고 큐를 비운 뒤, 음성 채널에서 나가.
+* **/pause** & **/resume**: 노래를 일시정지하거나 다시 재생해.
+* **/toggleautoleave**: 큐가 비었을 때 60초 후 자동으로 나갈지 말지 설정.
+* **/togglealoneleave**: 채널에 혼자 남았을 때 60초 후 자동으로 나갈지 말지 설정.
+"""
+
+# AI가 사용할 함수들 정의
+music_tools = [
+    # /nowplaying 명령어에 해당하는 도구
+    genai.protos.Tool(
+        function_declarations=[
+            genai.protos.FunctionDeclaration(
+                name="get_now_playing", # 이 이름은 실제 함수 이름이 아니라 /chat 로직 내에서 해당 함수를 호출하기 위한 이름임
+                description="현재 재생 중인 노래의 정보를 가져옵니다.",
+            )
+        ]
+    ),
+    # /skip 명령어에 해당하는 도구
+    genai.protos.Tool(
+        function_declarations=[
+            genai.protos.FunctionDeclaration(
+                name="skip_current_song",
+                description="현재 재생 중인 노래를 건너뜁니다.",
+            )
+        ]
+    ),
+    genai.protos.Tool(
+        function_declarations=[
+            genai.protos.FunctionDeclaration(
+                name="play_song",
+                description="지정된 쿼리(노래 제목 또는 키워드)로 노래를 검색하고 재생 목록 맨 뒤에 추가합니다.",
+                # AI가 이 함수를 호출할 때 어떤 정보를 넘겨줘야 하는지 정의
+                parameters=genai.protos.Schema(
+                    type=genai.protos.Type.OBJECT,
+                    properties={
+                        "query": genai.protos.Schema(type=genai.protos.Type.STRING, description="검색할 노래 제목 또는 키워드 또는 url")
+                    },
+                    required=["query"]
+                )
+            )
+        ]
+    ),
+    # /playnext 명령어에 해당하는 도구
+    genai.protos.Tool(
+        function_declarations=[
+            genai.protos.FunctionDeclaration(
+                name="play_song_next",
+                description="지정된 쿼리로 노래를 검색하고 바로 다음 곡으로 재생되도록 큐 맨 앞에 추가합니다.",
+                parameters=genai.protos.Schema(
+                    type=genai.protos.Type.OBJECT,
+                    properties={
+                        "query": genai.protos.Schema(type=genai.protos.Type.STRING, description="검색할 노래 제목 또는 키워드")
+                    },
+                    required=["query"]
+                )
+            )
+        ]
+    ),
+    # /queue 명령어에 해당하는 도구
+    genai.protos.Tool(
+        function_declarations=[
+            genai.protos.FunctionDeclaration(
+                name="show_queue",
+                description="현재 대기열(큐)에 있는 노래 목록을 보여줍니다.",
+            )
+        ]
+    ),
+    # 큐에서 곡을 삭제하는 도구(복수도 가능)
+    genai.protos.Tool(
+        function_declarations=[
+            genai.protos.FunctionDeclaration(
+                name="remove_songs_from_queue",
+                description="대기열(큐)에서 지정된 번호의 노래를 하나 또는 여러 개 삭제합니다.",
+                # AI가 이 함수를 호출할 때 어떤 정보를 넘겨줘야 하는지 정의합니다.
+                parameters=genai.protos.Schema(
+                    type=genai.protos.Type.OBJECT,
+                    properties={
+                        "indices": genai.protos.Schema(
+                            type=genai.protos.Type.ARRAY, # 여러 값을 받기 위해 ARRAY 타입 사용
+                            description="삭제할 노래의 대기열 번호 목록 (예: 2번, 5번을 삭제하려면 [2, 5] 전달)",
+                            items=genai.protos.Schema(type=genai.protos.Type.INTEGER) # 배열의 각 항목은 숫자여야 함
+                        )
+                    },
+                    required=["indices"]
+                )
+            )
+        ]
+    ),
+            
+    # (나중에 추가 예정)
+
+]
+
+# Gemini 모델 초기화
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    generation_config = {"temperature": 0.8, "top_p": 0.9}
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    ]
+    
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-flash",
+        generation_config=generation_config,
+        system_instruction=CHATBOT_PERSONA,
+        safety_settings=safety_settings,
+        tools=music_tools # 여기서 함수 정의한거 알려주는거임
+    )
+
+else:
+    model = None
+
 
 
 # --- Commands ---
@@ -558,6 +765,150 @@ async def togglealoneleave(interaction: discord.Interaction):
         await interaction.response.send_message("✅ 이제 음성 채널에 혼자 남으면 봇이 자동으로 나갑니다.")
     else:
         await interaction.response.send_message("❌ 이제 음성 채널에 혼자 남아도 봇이 자동으로 나가지 않습니다.")
+
+@bot.tree.command(name="chat", description="AI 챗봇과 대화하고, 명령을 내립니다.")
+async def chat(interaction: discord.Interaction, message: str):
+    if not model:
+        await interaction.response.send_message("챗봇 모델이 아직 설정되지 않았습니다.", ephemeral=True)
+        return
+        
+    await interaction.response.defer()
+
+    channel_id = interaction.channel.id
+    
+    if channel_id not in bot.chat_sessions:
+        bot.chat_sessions[channel_id] = model.start_chat(history=[])
+    chat_session = bot.chat_sessions[channel_id]
+
+    try:
+        # --- 1. AI 응답에 타임아웃 설정 ---
+        try:
+            # AI의 응답을 최대 20초까지 기다림
+            response = await asyncio.wait_for(chat_session.send_message_async(message), timeout=20.0)
+        except asyncio.TimeoutError:
+            # 20초가 지나면 타임아웃 에러를 발생시키고 사용자에게 알림
+            await interaction.followup.send("🤔 AI가 생각하는 데 시간이 너무 오래 걸리네. 다시 시도해 줄래?", ephemeral=True)
+            return
+
+        function_call = None
+        if response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if part.function_call:
+                    function_call = part.function_call
+                    break
+
+        if function_call:
+            tool_name = function_call.name
+            state = bot.get_music_state(interaction) # state를 미리 가져옴
+
+            # --- 노래 재생/추가 관련 기능 ---
+            if tool_name in ["play_song", "play_song_next"]:
+                if not interaction.user.voice:
+                    await interaction.followup.send("노래를 틀려면 먼저 음성 채널에 들어가야 해.", ephemeral=True)
+                    return
+                
+                query = function_call.args.get("query")
+                if not query:
+                    await interaction.followup.send("무슨 노래를 틀어야 할지 모르겠어. 노래 제목을 알려줄래?", ephemeral=True)
+                    return
+
+                # --- 2. 유튜브 검색(yt-dlp)에 타임아웃 설정 ---
+                try:
+                    # 노래 검색을 최대 20초까지 기다림
+                    songs, fetch_message = await asyncio.wait_for(state._fetch_songs(query, interaction.user, is_playlist=False), timeout=20.0)
+                except asyncio.TimeoutError:
+                    await interaction.followup.send("유튜브에서 노래를 찾는데 너무 오래 걸려서 취소했어. 다른 키워드로 시도해볼래?", ephemeral=True)
+                    return
+
+                if not songs:
+                    await interaction.followup.send(f"'{query}'(으)로 노래를 찾지 못했어. 다른 키워드로 다시 말해줄래?", ephemeral=True)
+                    return
+
+                song_to_play = songs[0]
+
+                async with state.lock:
+                    if tool_name == "play_song_next":
+                        state.queue.insert(0, song_to_play)
+                        confirm_message = f"✅ 알겠어! **{song_to_play['title']}** 을(를) 다음 곡으로 추가할게."
+                    else: # play_song
+                        state.queue.append(song_to_play)
+                        confirm_message = f"✅ 알겠어! **{song_to_play['title']}** 을(를) 큐에 추가할게."
+
+                    voice_client = interaction.guild.voice_client
+                    if not voice_client:
+                        voice_client = await interaction.user.voice.channel.connect()
+                    
+                    if not voice_client.is_playing():
+                        await state.play_music()
+                
+                await interaction.followup.send(confirm_message)
+                return
+
+            # --- 기타 다른 기능들 ---
+            elif tool_name == "skip_current_song":
+                if state.skip():
+                    await interaction.followup.send("⏭️ 노래를 건너뛰었습니다.")
+                else:
+                    await interaction.followup.send("재생 중인 노래가 없습니다.", ephemeral=True)
+                return
+            
+            elif tool_name == "get_now_playing":
+                if state.current_song:
+                    embed = state._create_nowplaying_embed()
+                    await interaction.followup.send(embed=embed)
+                else:
+                    await interaction.followup.send("현재 재생 중인 노래가 없습니다.", ephemeral=True)
+                return
+            # --- '/queue' 보기 기능 실행 ---
+            elif tool_name == "show_queue":
+                if not state.queue and not state.current_song:
+                    await interaction.followup.send("큐가 비어있어. 보여줄 게 없네!")
+                    return
+
+                # 기존 /queue처럼 View와 Embed를 생성해서 보여줌
+                view = MusicQueueView(bot_instance=bot, interaction=interaction)
+                embed = await view.create_embed()
+                await interaction.followup.send(embed=embed, view=view)
+                return
+
+            # --- 큐에서 노래 삭제 기능 실행 ---
+            elif tool_name == "remove_songs_from_queue":
+                indices = function_call.args.get("indices")
+                if not indices:
+                    await interaction.followup.send("몇 번 노래를 삭제해야 할지 알려주지 않았어.", ephemeral=True)
+                    return
+
+                # GuildMusicState에 만든 함수를 호출해 삭제 작업
+                removed_titles, failed_indices = state.remove_songs_by_indices(indices)
+                
+                # 결과에 따라 사용자에게 보낼 메시지를 만듬
+                response_parts = []
+                if removed_titles:
+                    # 삭제 성공한 노래 목록
+                    response_parts.append(f"🗑️ **{len(removed_titles)}개**의 노래를 큐에서 삭제했어: `{'`, `'.join(removed_titles)}`")
+                if failed_indices:
+                    # 실패한 인덱스 목록
+                    response_parts.append(f"🤔 요청한 번호 중 **{failed_indices}**번은 큐에 없거나 잘못된 번호라 삭제하지 못했어.")
+                
+                final_response = "\n".join(response_parts)
+                await interaction.followup.send(final_response)
+                return
+            
+            else:
+                 await interaction.followup.send(f"🤔 '{tool_name}'이라는 기능은 아직 없어. 내가 할 수 있는 다른 일이 있을까?", ephemeral=True)
+        
+        else: # 함수 호출이 아닌 일반 답변
+            embed = discord.Embed(
+                color=discord.Color.gold(),
+                description=response.text
+            )
+            embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
+            embed.add_field(name="질문 내용", value=f"> {message}", inline=False)
+            await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        print(f"Chatbot command error: {e}")
+        await interaction.followup.send("🤯 으악! 지금 머리가 너무 복잡해서 생각할 수가 없어. 조금만 있다가 다시 말 걸어줘!", ephemeral=True)
 
 if __name__ == "__main__":
     if TOKEN:
