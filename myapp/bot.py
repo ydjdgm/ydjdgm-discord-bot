@@ -900,10 +900,12 @@ async def chat(interaction: discord.Interaction, message: str):
         else: # 함수 호출이 아닌 일반 답변
             embed = discord.Embed(
                 color=discord.Color.gold(),
-                description=response.text
+                description=message
+                # description=response.text
             )
             embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
-            embed.add_field(name="질문 내용", value=f"> {message}", inline=False)
+            # embed.add_field(name="질문 내용", value=f"> {message}", inline=False)
+            embed.add_field(name="", value=f"> {response.text}", inline=False)
             await interaction.followup.send(embed=embed)
 
     except Exception as e:
