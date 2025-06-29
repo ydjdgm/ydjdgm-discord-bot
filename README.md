@@ -44,6 +44,8 @@ Gemini AI와 연동하여 자연어 명령을 이해하는 스마트 음악봇�
 
 ## 🇺🇸 English
 
+A smart music bot integrated with Gemini AI to understand natural language commands. Users can ask the bot to play, skip, manage the queue, and more, just like having a conversation.
+
 ### 🔧 Command List
 
 | Command                | Description                                                                                                                     | Usage                                                      |
