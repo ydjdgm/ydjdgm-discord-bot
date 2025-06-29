@@ -40,6 +40,8 @@ Gemini AI와 연동하여 자연어 명령을 이해하는 스마트 음악봇�
 
  `/chat` 명령어 뒤에 원하는 내용을 자연스럽게 입력하여 봇의 모든 기능을 제어할 수 있습니다.
 
+ 챗봇은 기본적으로 한국어로 대답하고 다른 언어로 질문 시 해당 언어로 대답합니다.
+
  | 사용자 요청 (이렇게 말해보세요) | 봇의 행동 또는 답변 |
 | :--- | :--- |
 | "아이유 밤편지 틀어줘" | `play_song` 함수를 호출하여 '아이유 밤편지'를 검색하고 큐에 추가합니다. |
@@ -90,6 +92,8 @@ A smart music bot integrated with Gemini AI to understand natural language comma
 ### 🤖 Chatbot (`/chat`) Usage Examples
 
 You can control all of the bot's features by typing what you want naturally after the `/chat` command.
+
+The chatbot will answer in Korean by default and will answer questions in other languages when asked in those languages.
 
 | User Request (Try saying this) | Bot's Action or Response |
 | :--- | :--- |
