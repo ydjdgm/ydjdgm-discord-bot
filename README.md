@@ -6,10 +6,13 @@
 
 ## 🇰🇷 한국어
 
+Gemini AI와 연동하여 자연어 명령을 이해하는 스마트 음악봇입니다. 사용자는 일반적인 대화처럼 봇에게 재생, 스킵, 큐 관리 등을 요청할 수 있습니다.
+
 ## 🔧 명령어 목록
 
 | 명령어                 | 설명                                                                                                                              | 사용법                                                     |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `/chat` | AI 챗봇과 대화하여 봇의 음악 기능을 자연어로 제어합니다.<br>*아직 업데이트 중* | `/chat message:[자연어 명령]` |
 | `/play`                | 노래를 검색해 선택하거나, 유튜브 URL(영상/재생목록)을 큐에 추가합니다.<br>*재생목록 추가 시 `shuffle` 옵션으로 순서를 섞을 수 있습니다.* | `/play query:[유튜브 검색어 또는 URL] shuffle:[True/False]`        |
 | `/playnext`            | 노래를 검색해 선택하거나, URL을 입력하여 바로 다음 곡으로 예약합니다.<br>*재생목록은 `/playnext`로 추가할 수 없습니다.*                 | `/playnext query:[유튜브 검색어 또는 URL]`                         |
 | `/queue`               | 현재 재생 중인 노래와 대기열 목록을 보여주는 컨트롤러를 소환합니다.                                                                 | `/queue`                                                   |
@@ -45,6 +48,7 @@
 
 | Command                | Description                                                                                                                     | Usage                                                      |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `/chat` | Chat with the AI to control all music features using natural language.<br>*still being updated* | `/chat message:[Your command]` |
 | `/play`                | Searches for a song to select or adds a YouTube URL (video/playlist) to the queue.<br>*Use the `shuffle` option to shuffle playlists.* | `/play query:[YouTube keyword or URL] shuffle:[True/False]`         |
 | `/playnext`            | Searches for a song to select or uses a URL to queue it up to play next.<br>*Playlists cannot be added with this command.*         | `/playnext query:[YouTube keyword or URL]`                          |
 | `/queue`               | Summons a controller to view the currently playing song and the queue.                                                          | `/queue`                                                   |
