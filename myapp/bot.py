@@ -23,7 +23,7 @@ class GuildMusicState:
         self.interaction = interaction
         self.queue = [] # 현재 서버의 큐 정보 변수
         self.current_song = None # 현재 재생 중인 곡 정보 변수
-        self.lock = asyncio.Lock() # 경합 조건 막는 Lock
+        self.lock = asyncio.Lock() # 경합 조건 막는 Lock (명령어 여러 개가 동시에 막 올 때 에러 방지용)
 
     # 현재 재생 중인 음악 정보 embed 생성 함수
     def _create_nowplaying_embed(self):
@@ -71,7 +71,7 @@ class GuildMusicState:
                 search_query = query if query.startswith('http') else f"ytsearch:{query}"
                 with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
                     info = ydl.extract_info(search_query, download=False)
-                    # ytsearch는 'entries' 리스트를 반환하므로 첫 번째 항목을 사용
+
                     if 'entries' in info:
                         if not info['entries']:
                             return [], "❌ 해당 검색어로 노래를 찾을 수 없습니다."
@@ -90,7 +90,7 @@ class GuildMusicState:
         songs_to_add, message = await loop.run_in_executor(None, extract)
         return songs_to_add, message
 
-    # 음악을 직접적으로 재생하는 함수
+    # 음악을 직접적으로 재생하는 함수 (비동기)
     async def play_music(self):
         if not self.queue:
             self.current_song = None
@@ -121,7 +121,7 @@ class GuildMusicState:
             await self.interaction.channel.send(f"오류가 발생해 다음 곡을 재생합니다: {e}")
             await self.play_music()
 
-    # 다음 곡 재생 (동기 환경용)
+    # 다음 곡 재생 (동기)
     def play_next_song(self):
         asyncio.run_coroutine_threadsafe(self.play_music(), self.bot.loop)
 
@@ -146,7 +146,7 @@ class GuildMusicState:
             voice_client.resume(); return True
         return False
 
-    # 재생 멈추고 봇 나가기
+    # 재생 멈추고 봇 내보내내기
     async def stop(self):
         voice_client = self.interaction.guild.voice_client
         if voice_client:
@@ -180,6 +180,7 @@ class MyBot(discord.Client):
 bot = MyBot()
 
 # --- UI 클래스 ---
+# --- /queue 용 ---
 class MusicQueueView(View):
     def __init__(self, bot_instance, interaction):
         super().__init__(timeout=queue_ui_timeout)
@@ -312,7 +313,6 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
 
     async with state.lock:
         try:
-            # 재생목록인지 확인하는 조건
             is_playlist = 'list=' in query and query.startswith('http')
             
             songs_to_add, message = await state._fetch_songs(query, interaction.user, is_playlist, shuffle)
@@ -397,7 +397,6 @@ async def playnext(interaction: discord.Interaction, query: str):
             if not songs_to_add:
                 return await interaction.followup.send("노래를 찾을 수 없습니다.")
 
-            # 노래를 큐의 맨 앞에 추가
             song_to_add = songs_to_add[0]
             state.queue.insert(0, song_to_add)
             
