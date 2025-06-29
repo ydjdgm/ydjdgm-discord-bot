@@ -35,6 +35,20 @@ Gemini AI와 연동하여 자연어 명령을 이해하는 스마트 음악봇�
       * **⏹️ 정지**: 음악 재생을 완전히 멈추고 봇이 채널을 나갑니다.
       * **\< 이전 / 다음 \>**: 대기열이 길 경우 페이지를 넘겨 확인합니다.
       * **삭제할 노래 선택... (드롭다운)**: 현재 페이지에 보이는 노래 중 특정 곡을 큐에서 제거합니다.
+   
+ ### 🤖 챗봇(`/chat`) 사용 예시
+
+ `/chat` 명령어 뒤에 원하는 내용을 자연스럽게 입력하여 봇의 모든 기능을 제어할 수 있습니다.
+
+ | 사용자 요청 (이렇게 말해보세요) | 봇의 행동 또는 답변 |
+| :--- | :--- |
+| "아이유 밤편지 틀어줘" | `play_song` 함수를 호출하여 '아이유 밤편지'를 검색하고 큐에 추가합니다. |
+| "지금 나오는 노래 뭐야?" | `get_now_playing` 함수를 호출하여 현재 곡 정보를 보여줍니다. |
+| "이 노래 지겨운데 다음 곡으로 넘겨줘" | `skip_current_song` 함수를 호출하여 노래를 건너뜁니다. |
+| "레드벨벳 노래 바로 다음에 듣고 싶어" | `play_song_next` 함수를 호출하여 레드벨벳 노래를 검색하고 큐 맨 앞에 추가합니다. |
+| "큐에 뭐 있는지 목록 좀 보여줘" | `show_queue` 함수를 호출하여 현재 대기열과 컨트롤러를 보여줍니다. |
+| "대기열에서 2번이랑 5번 노래는 뺄래" | `remove_songs_from_queue` 함수를 호출하여 2번, 5번 곡을 삭제합니다. |
+| "안녕? 자기소개 해줘" | (일반 대화) "안녕\! 나는 이 서버의 AI 도우미 ydjdgm이야. 도움이 필요하면 언제든지 말 걸어줘." |
     
 <br>
 
@@ -73,3 +87,16 @@ A smart music bot integrated with Gemini AI to understand natural language comma
       * **\< Prev / Next \>**: Navigates through pages of the queue if it's long.
       * **Select a song to remove... (Dropdown)**: Removes a specific song from the queue from the songs visible on the current page.
    
+### 🤖 Chatbot (`/chat`) Usage Examples
+
+You can control all of the bot's features by typing what you want naturally after the `/chat` command.
+
+| User Request (Try saying this) | Bot's Action or Response |
+| :--- | :--- |
+| "Play 'As It Was' by Harry Styles" | Calls the `play_song` function to search for 'As It Was' and adds it to the queue. |
+| "What song is this?" | Calls the `get_now_playing` function to show the current track's information. |
+| "I'm tired of this song, next track" | Calls the `skip_current_song` function to skip the song. |
+| "I want to hear 'Anti-Hero' right after this" | Calls the `play_song_next` function to add 'Anti-Hero' to the front of the queue. |
+| "Show me the queue" | Calls the `show_queue` function to display the current queue and controller. |
+| "Remove songs 2 and 5 from the list" | Calls the `remove_songs_from_queue` function to delete tracks 2 and 5. |
+| "Hello, who are you?" | (General Chat) "Hello\! I'm ydjdgm, the AI assistant for this server. Let me know if you need anything\!" |
