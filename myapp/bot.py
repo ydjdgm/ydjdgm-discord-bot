@@ -9,7 +9,6 @@ from config import TOKEN
 # --- 설정 변수 ---
 queue_ui_timeout = 180  # 큐 UI 타임아웃 (초)
 bot_sleep_timeout = 60  # 봇 자동 퇴장 타임아웃 (초)
-play_music_delete_timeout = 300  # '지금 재생 중' 메시지 자동 삭제 시간 (초)
 YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True}
 FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 intents = discord.Intents.default() # 봇 권한
@@ -24,6 +23,9 @@ class GuildMusicState:
         self.queue = [] # 현재 서버의 큐 정보 변수
         self.current_song = None # 현재 재생 중인 곡 정보 변수
         self.lock = asyncio.Lock() # 경합 조건 막는 Lock (명령어 여러 개가 동시에 막 올 때 에러 방지용)
+        self.auto_leave_on_empty = True # queue가 비었을 때 자동퇴장 on/off
+        self.auto_leave_when_alone = True # 사용자 없을 때 자동퇴장 on/off
+        self.leave_timer_task = None # 자동 퇴장 타이머
 
     # 현재 재생 중인 음악 정보 embed 생성 함수
     def _create_nowplaying_embed(self):
@@ -68,24 +70,37 @@ class GuildMusicState:
             # URL이거나 검색어일 경우 (단일 곡)
             else:
                 # URL이 아니면 검색어로 처리
-                search_query = query if query.startswith('http') else f"ytsearch:{query}"
-                with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-                    info = ydl.extract_info(search_query, download=False)
-
-                    if 'entries' in info:
-                        if not info['entries']:
+                if query.startswith('http'):
+                    with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+                        info = ydl.extract_info(query, download=False)
+                        song = {
+                            'title': info.get('title'),
+                            'uploader': info.get('uploader'),
+                            'webpage_url': info.get('webpage_url'),
+                            'channel_url': info.get('channel_url'),
+                            'thumbnail': info.get('thumbnail'),
+                            'requester': requester
+                        }
+                        return [song], f"✅ **{song['title']}** 을(를) 큐에 추가했습니다."
+                else:
+                    with yt_dlp.YoutubeDL({'format': 'bestaudio/best', 'quiet': True, 'default_search': 'ytsearch5'}) as ydl:
+                        info = ydl.extract_info(query, download=False)
+                        
+                        if not info.get('entries'):
                             return [], "❌ 해당 검색어로 노래를 찾을 수 없습니다."
-                        info = info['entries'][0]
-                    
-                    song = {
-                        'title': info.get('title'),
-                        'uploader': info.get('uploader'),
-                        'webpage_url': info.get('webpage_url'),
-                        'channel_url': info.get('channel_url'),
-                        'thumbnail': info.get('thumbnail'),
-                        'requester': requester
-                    }
-                    return [song], f"✅ **{song['title']}** 을(를) 큐에 추가했습니다."
+                        
+                        songs = []
+                        for entry in info['entries']:
+                            songs.append({
+                                'title': entry.get('title'),
+                                'uploader': entry.get('uploader'),
+                                'webpage_url': entry.get('webpage_url'),
+                                'channel_url': entry.get('channel_url'),
+                                'thumbnail': entry.get('thumbnail'),
+                                'requester': requester
+                            })
+                        # 검색 결과 목록과, 선택 UI를 띄우라는 메시지를 반환
+                        return songs, "🔍 아래 목록에서 재생할 노래를 선택해주세요."
 
         songs_to_add, message = await loop.run_in_executor(None, extract)
         return songs_to_add, message
@@ -94,11 +109,16 @@ class GuildMusicState:
     async def play_music(self):
         if not self.queue:
             self.current_song = None
-            await asyncio.sleep(bot_sleep_timeout)
-            voice_client = self.interaction.guild.voice_client
-            if voice_client and not voice_client.is_playing() and not self.queue:
-                await voice_client.disconnect()
+
+            if self.auto_leave_on_empty:
+                await asyncio.sleep(bot_sleep_timeout)
+                voice_client = self.interaction.guild.voice_client
+
+                # 큐가 비어있고, 재생 중도 아닐 때만 퇴장
+                if voice_client and not voice_client.is_playing() and not self.queue:
+                    await voice_client.disconnect()
             return
+
 
         self.current_song = self.queue.pop(0)
         webpage_url = self.current_song.get('webpage_url')
@@ -113,7 +133,7 @@ class GuildMusicState:
                     self.current_song['thumbnail'] = info.get('thumbnail')
 
             embed = self._create_nowplaying_embed()
-            if embed: await self.interaction.channel.send(embed=embed, delete_after=play_music_delete_timeout)
+            if embed: await self.interaction.channel.send(embed=embed)
 
             source = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTIONS)
             voice_client.play(source, after=lambda _: self.bot.loop.call_soon_threadsafe(self.play_next_song))
@@ -163,23 +183,128 @@ class MyBot(discord.Client):
         self.tree = discord.app_commands.CommandTree(self)
         self.music_states = {}
 
+    # commands 동기화
     async def setup_hook(self):
         await self.tree.sync()
         print("명령어가 동기화되었습니다.")
 
+    # 봇 시작 시
     async def on_ready(self):
         print(f"{self.user}로 로그인했습니다.")
 
+    # 서버 단위 변수, 함수들 가져오기
     def get_music_state(self, interaction: discord.Interaction):
         guild_id = interaction.guild.id
         if guild_id not in self.music_states:
             self.music_states[guild_id] = GuildMusicState(self, interaction)
         self.music_states[guild_id].interaction = interaction
         return self.music_states[guild_id]
+    
+    # 채널에 봇 혼자일 시 자동 퇴장 타이머 시작
+    async def start_leave_timer(self, guild: discord.Guild):
+        await asyncio.sleep(bot_sleep_timeout)
+
+        # 시간이 지난 후에도 여전히 봇이 음성 채널에 있는지, 채널에 혼자인지 재확인
+        voice_client = guild.voice_client
+        if voice_client and len(voice_client.channel.members) == 1:
+            state = self.music_states.get(guild.id)
+            if state:
+                await state.stop() # stop 함수로 퇴장
+
+    # 사용자의 음성 채널 상태 변경을 감지
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        # 봇이 채널에 없으면 무시
+        if not member.guild.voice_client:
+            return
+
+        # 봇 자신의 상태 변경은 무시
+        if member == self.user:
+            return
+
+        voice_client = member.guild.voice_client
+        channel = voice_client.channel
+        state = self.music_states.get(member.guild.id)
+        
+        # auto_leave_when_alone == False면 무시
+        if not state or not state.auto_leave_when_alone:
+            return
+
+        # 봇 제외 채널에 있는 사용자 수 확인
+        real_users = [m for m in channel.members if not m.bot]
+
+        # 봇 혼자 남았을 경우
+        if len(real_users) == 0:
+            # 타이머 시작
+            if not state.leave_timer_task or state.leave_timer_task.done():
+                state.leave_timer_task = asyncio.create_task(self.start_leave_timer(member.guild))
+        
+        # 다른 사용자가 있을 경우
+        else:
+            if state.leave_timer_task and not state.leave_timer_task.done():
+                state.leave_timer_task.cancel()
+                state.leave_timer_task = None
 
 bot = MyBot()
 
 # --- UI 클래스 ---
+
+# --- 검색 결과 선택용 드롭다운 메뉴 ---
+class SongSelect(discord.ui.Select):
+    def __init__(self, bot, songs):
+        self.bot = bot
+        self.songs = songs
+        
+        # 드롭다운 메뉴에 표시될 옵션 설정
+        options = [
+            discord.SelectOption(
+                label=f"{i+1}. {song.get('title', '알 수 없는 제목')[:80]}",
+                description=f"{song.get('uploader', '알 수 없는 채널')[:90]}",
+                value=str(i)
+            ) for i, song in enumerate(songs)
+        ]
+        
+        super().__init__(placeholder="재생할 노래를 선택하세요...", min_values=1, max_values=1, options=options)
+
+    # 사용자가 드롭다운에서 항목을 선택했을 때 실행되는 콜백
+    async def callback(self, interaction: discord.Interaction):
+        selected_index = int(self.values[0])
+        selected_song = self.songs[selected_index]
+        
+        state = self.bot.get_music_state(interaction)
+        
+        # View 비활성화 + "노래를 선택했습니다" 메시지 표시
+        self.disabled = True
+        self.placeholder = selected_song.get('title')[:100]
+        await interaction.response.edit_message(view=self.view)
+
+        # /playnext 처리를 위한 로직 (view에 play_next 속성이 있으면)
+        play_next_flag = getattr(self.view, 'play_next', False)
+
+        async with state.lock:
+            if play_next_flag:
+                state.queue.insert(0, selected_song)
+                await interaction.followup.send(f"✅ **{selected_song['title']}** 을(를) 다음 곡으로 추가했습니다.")
+            else:
+                state.queue.append(selected_song)
+                await interaction.followup.send(f"✅ **{selected_song['title']}** 을(를) 큐에 추가했습니다.")
+
+            voice_client = interaction.guild.voice_client
+            if not voice_client:
+                voice_client = await interaction.user.voice.channel.connect()
+
+            if not voice_client.is_playing():
+                await state.play_music()
+
+
+# --- 드롭다운 메뉴를 담을 View ---
+class SongSearchView(discord.ui.View):
+    def __init__(self, bot, songs, *, play_next=False):
+        super().__init__()
+        self.play_next = play_next # /playnext 명령어인지 구분하는 플래그
+        self.add_item(SongSelect(bot, songs))
+
+
+
 # --- /queue 용 ---
 class MusicQueueView(View):
     def __init__(self, bot_instance, interaction):
@@ -303,7 +428,7 @@ class MusicQueueView(View):
 
 
 # --- Commands ---
-@bot.tree.command(name="play", description="노래나 재생목록 주소를 큐에 추가합니다.")
+@bot.tree.command(name="play", description="노래를 검색하거나 유튜브 주소를 큐에 추가합니다.")
 async def play(interaction: discord.Interaction, query: str, shuffle: bool = False):
     state = bot.get_music_state(interaction)
     if not interaction.user.voice:
@@ -311,28 +436,63 @@ async def play(interaction: discord.Interaction, query: str, shuffle: bool = Fal
 
     await interaction.response.defer()
 
-    async with state.lock:
-        try:
-            is_playlist = 'list=' in query and query.startswith('http')
-            
-            songs_to_add, message = await state._fetch_songs(query, interaction.user, is_playlist, shuffle)
-            
-            if not songs_to_add:
-                return await interaction.followup.send(message)
+    is_playlist = 'list=' in query and query.startswith('http')
+    
+    songs, message = await state._fetch_songs(query, interaction.user, is_playlist, shuffle)
+    
+    if not songs:
+        return await interaction.followup.send(message)
 
-            state.queue.extend(songs_to_add)
+    # 검색어가 아닌 URL, 재생목록의 경우 (즉시 추가)
+    if query.startswith('http') or is_playlist:
+        async with state.lock:
+            state.queue.extend(songs)
             await interaction.followup.send(message)
+            
+            voice_client = interaction.guild.voice_client
+            if not voice_client:
+                voice_client = await interaction.user.voice.channel.connect()
 
-        except Exception as e:
-            print(e)
-            return await interaction.followup.send(f"오류가 발생했습니다: {e}")
+            if not voice_client.is_playing():
+                await state.play_music()
+    # 검색어의 경우 (선택 UI 전송)
+    else:
+        view = SongSearchView(bot, songs)
+        await interaction.followup.send(message, view=view)
 
-        voice_client = interaction.guild.voice_client
-        if not voice_client:
-            voice_client = await interaction.user.voice.channel.connect()
+@bot.tree.command(name="playnext", description="노래를 검색하여 바로 다음에 재생합니다.")
+async def playnext(interaction: discord.Interaction, query: str):
+    state = bot.get_music_state(interaction)
+    if not interaction.user.voice:
+        return await interaction.response.send_message("먼저 음성 채널에 참여해주세요!", ephemeral=True)
+    
+    if 'list=' in query and query.startswith('http'):
+        return await interaction.response.send_message("재생목록은 '바로 다음에 추가'할 수 없습니다.", ephemeral=True)
 
-        if not voice_client.is_playing():
-            await state.play_music()
+    await interaction.response.defer()
+
+    songs, message = await state._fetch_songs(query, interaction.user, is_playlist=False)
+
+    if not songs:
+        return await interaction.followup.send(message)
+
+    # URL인 경우 (즉시 추가)
+    if query.startswith('http'):
+        async with state.lock:
+            state.queue.insert(0, songs[0])
+            await interaction.followup.send(message)
+            
+            voice_client = interaction.guild.voice_client
+            if not voice_client:
+                voice_client = await interaction.user.voice.channel.connect()
+
+            if not voice_client.is_playing():
+                await state.play_music()
+    # 검색어인 경우 (선택 UI 전송)
+    else:
+        # play_next=True 플래그를 전달
+        view = SongSearchView(bot, songs, play_next=True)
+        await interaction.followup.send(message, view=view)
 
 @bot.tree.command(name="queue", description="노래 큐 목록을 보여줍니다.")
 async def queue(interaction: discord.Interaction):
@@ -377,41 +537,27 @@ async def nowplaying(interaction: discord.Interaction):
     embed = state._create_nowplaying_embed()
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="playnext", description="노래를 바로 다음에 재생합니다.")
-async def playnext(interaction: discord.Interaction, query: str):
+@bot.tree.command(name="toggleautoleave", description="큐가 비었을 때 봇이 자동으로 나가는 기능을 켜거나 끕니다.")
+async def toggleautoleave(interaction: discord.Interaction):
     state = bot.get_music_state(interaction)
-    if not interaction.user.voice:
-        return await interaction.response.send_message("먼저 음성 채널에 참여해주세요!", ephemeral=True)
-    
-    # 재생목록은 playnext로 추가할 수 없도록 제한
-    if 'list=' in query and query.startswith('http'):
-        return await interaction.response.send_message("재생목록은 '바로 다음에 추가'할 수 없습니다. `/play` 명령어를 이용해주세요.", ephemeral=True)
 
-    await interaction.response.defer()
+    state.auto_leave_on_empty = not state.auto_leave_on_empty
 
-    async with state.lock:
-        try:
-            # 재생목록이 아니므로 is_playlist=False
-            songs_to_add, message = await state._fetch_songs(query, interaction.user, is_playlist=False)
-            
-            if not songs_to_add:
-                return await interaction.followup.send("노래를 찾을 수 없습니다.")
+    if state.auto_leave_on_empty:
+        await interaction.response.send_message("✅ 이제부터 큐가 비면 봇이 자동으로 채널을 나갑니다.")
+    else:
+        await interaction.response.send_message("❌ 이제부터 큐가 비어도 봇이 자동으로 나가지 않습니다.")
 
-            song_to_add = songs_to_add[0]
-            state.queue.insert(0, song_to_add)
-            
-            await interaction.followup.send(f"✅ **{song_to_add['title']}** 을(를) 다음 곡으로 추가했습니다.")
+@bot.tree.command(name="togglealoneleave", description="음성 채널에 봇 혼자 있을 때 자동으로 나가는 기능을 켜거나 끕니다.")
+async def togglealoneleave(interaction: discord.Interaction):
+    state = bot.get_music_state(interaction)
 
-        except Exception as e:
-            return await interaction.followup.send(f"오류가 발생했습니다: {e}")
+    state.auto_leave_when_alone = not state.auto_leave_when_alone
 
-        voice_client = interaction.guild.voice_client
-        if not voice_client:
-            voice_client = await interaction.user.voice.channel.connect()
-
-        if not voice_client.is_playing():
-            await state.play_music()
-
+    if state.auto_leave_when_alone:
+        await interaction.response.send_message("✅ 이제 음성 채널에 혼자 남으면 봇이 자동으로 나갑니다.")
+    else:
+        await interaction.response.send_message("❌ 이제 음성 채널에 혼자 남아도 봇이 자동으로 나가지 않습니다.")
 
 if __name__ == "__main__":
     if TOKEN:
