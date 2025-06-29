@@ -2,6 +2,8 @@
 
 **[🇰🇷 한국어](#-한국어) ∙ [🇺🇸 English](#-english)**
 
+<br>
+
 ## 🇰🇷 한국어
 
 ## 🔧 명령어 목록
@@ -27,8 +29,12 @@
   - **⏹️ 정지**: 음악 재생을 완전히 멈추고 봇이 채널을 나갑니다.
   - **\< 이전 / 다음 \>**: 대기열이 길 경우 페이지를 넘겨 확인합니다.
   - **삭제할 노래 선택... (드롭다운)**: 현재 페이지에 보이는 노래 중 특정 곡을 큐에서 제거합니다.
+    
+<br>
 
 -----
+
+<br>
 
 ## 🇺🇸 English
 
@@ -55,3 +61,11 @@ This UI appears when you use the `/queue` command.
   - **⏹️ Stop**: Stops playback entirely and makes the bot leave the channel.
   - **\< Prev / Next \>**: Navigates through pages of the queue if it's long.
   - **Select a song to remove... (Dropdown)**: Removes a specific song from the queue from the songs visible on the current page.
+    
+<br><br><br><br><br><br><br><br><br><br>
+
+# update
+
+- 사용자가 없으면 나가기 기능 (on/off command까지)
+- queue에 노래 없을 때 나가기에 on/off command 달기
+- /play, /playnext에 검색어 입력 시 검색결과 상위 5-10개 정도 표시하고 선택 가능하게
