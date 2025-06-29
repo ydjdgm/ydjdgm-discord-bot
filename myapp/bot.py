@@ -417,4 +417,4 @@ if __name__ == "__main__":
     if TOKEN:
         bot.run(TOKEN)
     else:
-        print("오류: config.py 파일에 디스코드 봇 토큰(TOKEN)이 설정되지 않았습니다.")
+        print("오류: 디스코드 봇 토큰(TOKEN)이 설정되지 않았습니다.")
