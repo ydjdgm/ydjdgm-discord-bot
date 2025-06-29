@@ -106,3 +106,6 @@ The chatbot will answer in Korean by default and will answer questions in other 
 | "Show me the queue" | Calls the `show_queue` function to display the current queue and controller. |
 | "Remove songs 2 and 5 from the list" | Calls the `remove_songs_from_queue` function to delete tracks 2 and 5. |
 | "Hello, who are you?" | (General Chat) "Hello\! I'm ydjdgm, the AI assistant for this server. Let me know if you need anything\!" |
+
+![{6BF8956C-7CAC-4FF1-9D73-BFEC15269DA2}](https://github.com/user-attachments/assets/e0b31da5-ded4-482b-8b7f-f002a05689bb)
+
