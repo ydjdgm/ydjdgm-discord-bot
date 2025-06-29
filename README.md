@@ -8,8 +8,8 @@
 
 | 명령어          | 설명                                                               | 사용법                                                     |
 | -------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
-| `/play`        | 노래를 검색하거나 유튜브 URL(영상/재생목록)을 큐에 추가합니다.     | `/play query:[노래 제목, 키워드 또는 URL] shuffle:[True/False]` |
-| `/playnext`    | 노래를 검색하거나 URL을 입력하여 바로 다음 곡으로 예약합니다.    | `/playnext query:[노래 제목, 키워드 또는 URL]`                 |
+| `/play`        | 노래를 검색하거나 유튜브 URL(영상/재생목록)을 큐에 추가합니다.<br>재생목록 추가 시 shuffle 설정으로 노래의 순서를 섞어서 추가 할 수 있습니다.     | `/play query:[노래 제목, 키워드 또는 URL] shuffle:[True/False]` |
+| `/playnext`    | 노래를 검색하거나 URL을 입력하여 바로 다음 곡으로 예약합니다.<br>(재생목록은 불가능)    | `/playnext query:[노래 제목, 키워드 또는 URL]`                 |
 | `/queue`       | 현재 재생 중인 노래와 대기열 목록을 보여줍니다.                  | `/queue`                                                   |
 | `/skip`        | 현재 재생 중인 노래를 건너뛰고 다음 곡을 재생합니다.             | `/skip`                                                    |
 | `/pause`       | 현재 재생 중인 노래를 일시정지합니다.                            | `/pause`                                                   |
@@ -36,8 +36,8 @@
 
 | Command        | Description                                                          | Usage                                                      |
 | -------------- | -------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `/play`        | Searches for a song or adds a YouTube URL (video/playlist) to the queue. | `/play query:[song title, keyword, or URL] shuffle:[True/False]` |
-| `/playnext`    | Searches for a song or uses a URL to queue it up to play next.       | `/playnext query:[song title, keyword, or URL]`                  |
+| `/play`        | Searches for a song or adds a YouTube URL (video/playlist) to the queue.<br>When adding a playlist, you can shuffle the order of the songs with the shuffle parameter. | `/play query:[song title, keyword, or URL] shuffle:[True/False]` |
+| `/playnext`    | Searches for a song or uses a URL to queue it up to play next.<br>(video only)       | `/playnext query:[song title, keyword, or URL]`                  |
 | `/queue`       | Displays the currently playing song and the list of songs in the queue. | `/queue`                                                   |
 | `/skip`        | Skips the currently playing song and plays the next one.             | `/skip`                                                    |
 | `/pause`       | Pauses the currently playing song.                                   | `/pause`                                                   |
