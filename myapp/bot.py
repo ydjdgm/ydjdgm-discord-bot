@@ -13,7 +13,7 @@ from config import TOKEN, GEMINI_API_KEY
 # --- 설정 변수 ---
 queue_ui_timeout = 180  # 큐 UI 타임아웃 (초)
 bot_sleep_timeout = 60  # 봇 자동 퇴장 타임아웃 (초)
-YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True}
+YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True, 'cookiefile': './cookies.txt',}
 FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 intents = discord.Intents.default() # 봇 권한
 intents.message_content = True
