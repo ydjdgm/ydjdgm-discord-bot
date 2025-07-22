@@ -54,6 +54,8 @@ class GuildMusicState:
         def extract():
             # URL이면서 재생목록일 경우
             if is_playlist:
+                playlist_options = YDL_OPTIONS.copy()
+                playlist_options['extract_flat'] = 'in_playlist'
                 with yt_dlp.YoutubeDL({'extract_flat': 'in_playlist', 'quiet': True}) as ydl:
                     playlist_dict = ydl.extract_info(query, download=False)
                     songs = []
