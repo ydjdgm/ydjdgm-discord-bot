@@ -89,7 +89,7 @@ class GuildMusicState:
                 else:
                     search_options = YDL_OPTIONS.copy()
                     search_options['default_search'] = 'ytsearch5'
-                    with yt_dlp.YoutubeDL({'format': 'bestaudio/best', 'quiet': True, 'default_search': 'ytsearch5'}) as ydl:
+                    with yt_dlp.YoutubeDL(search_options) as ydl:
                         info = ydl.extract_info(query, download=False)
                         
                         if not info.get('entries'):
